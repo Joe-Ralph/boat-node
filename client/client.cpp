@@ -186,7 +186,8 @@ enum LedState {
   LED_RED_SOLID,
   LED_RED_BLINK,
   LED_BLUE_PAIRING,
-  LED_BLUE_PAIRED
+  LED_BLUE_PAIRED,
+  LED_YELLOW_LOW_BATTERY
 };
 volatile LedState ledState = LED_OFF;
 uint32_t ledStamp = 0; // timestamp for long-blue duration
@@ -312,12 +313,34 @@ void ledUpdate() {
       // long blue for 3 seconds then let status control
       if (t - ledStamp < 3000) ledSetPins(false,false,true);
       break;
+    case LED_YELLOW_LOW_BATTERY:
+      // Yellow (red + green) for low battery
+      ledSetPins(true, true, false);
+      break;
     default: ledSetPins(false,false,false); break;
   }
 }
 
-/* set LED according to comms; called periodically */
+/* set LED according to comms and battery status; called periodically */
 void updateLedByComms() {
+  // Check battery level first (highest priority)
+  static uint32_t lastBatteryCheck = 0;
+  static bool lowBattery = false;
+  
+  // Check battery level every 60 seconds to avoid frequent ADC reads
+  uint32_t now = millis();
+  if (now - lastBatteryCheck > 60000) { // 60 seconds
+    uint8_t batt = batteryPercentFromVoltage(readBatteryVoltage());
+    lowBattery = (batt < 20); // Less than 20% is considered low battery
+    lastBatteryCheck = now;
+  }
+  
+  if (lowBattery) {
+    ledState = LED_YELLOW_LOW_BATTERY;
+    return; // Low battery has highest priority
+  }
+  
+  // Normal operation - check comms status
   if (!paired) return;
   if (wanJoined) {
     // if WAN joined, prefer green. If mesh present -> steady green.
