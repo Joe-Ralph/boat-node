@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:boatnode/services/session_service.dart';
 import 'package:boatnode/models/session.dart';
-import 'package:boatnode/models/user.dart';
+import 'package:boatnode/models/user.dart' as app_user;
 import 'package:boatnode/services/backend_service.dart';
 
 class AuthService {
@@ -21,7 +21,7 @@ class AuthService {
   }
 
   // Mock login that returns a session
-  static Future<Session> login(String phoneNumber, String otp) async {
+  static Future<Session> login(String email, String otp) async {
     // In a real app, this would make an API call to verify the OTP
     await Future.delayed(const Duration(seconds: 1));
 
@@ -33,16 +33,16 @@ class AuthService {
     // Create a new session that expires in 7 days
     final session = Session(
       token: 'mock_jwt_${DateTime.now().millisecondsSinceEpoch}',
-      userId: 'user_${phoneNumber.replaceAll(RegExp(r'[^0-9]'), '')}',
-      displayName: 'User ${phoneNumber.substring(phoneNumber.length - 4)}',
+      userId: 'user_${email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
+      displayName: email.split('@')[0],
       expiresAt: DateTime.now().add(const Duration(days: 7)),
     );
 
     // Initialize mock user for this session (Fresh login -> No role)
-    final user = User(
-      id: 101,
+    final user = app_user.User(
+      id: "101", // Mock String ID
       displayName: session.displayName,
-      phoneNumber: phoneNumber,
+      email: email,
       role: null, // Force null role to trigger profile screen
       villageId: null,
     );
@@ -57,8 +57,8 @@ class AuthService {
     await SessionService.clearSession();
   }
 
-  static Future<User> updateProfile(
-    User user, {
+  static Future<app_user.User> updateProfile(
+    app_user.User user, {
     String? displayName,
     String? role,
     String? villageId,
@@ -84,7 +84,7 @@ class AuthService {
     print("Joined boat: ${result['boat_name']}");
   }
 
-  static Future<User?> getCurrentUser() async {
+  static Future<app_user.User?> getCurrentUser() async {
     await Future.delayed(const Duration(milliseconds: 500));
 
     // Return persisted user from SessionService
@@ -95,10 +95,10 @@ class AuthService {
     // Fallback if session exists but user not found (shouldn't happen with new logic)
     final session = SessionService.currentSession;
     if (session != null) {
-      final user = User(
-        id: 101,
+      final user = app_user.User(
+        id: "101",
         displayName: session.displayName,
-        phoneNumber: "+919876543210", // Fallback phone
+        email: "user@example.com", // Fallback email
         role: null,
         villageId: null,
       );

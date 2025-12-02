@@ -173,7 +173,7 @@ class _PairingScreenState extends State<PairingScreen>
 
       final result = await HardwareService.pairDevice(
         boatId: boatId,
-        userId: user.id,
+        userId: int.tryParse(user.id) ?? 0,
         displayName: user.displayName,
         deviceId: deviceId,
       );

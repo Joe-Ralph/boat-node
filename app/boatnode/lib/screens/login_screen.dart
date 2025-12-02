@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_localizations.dart';
-import '../services/otp_service.dart';
+
 import '../services/auth_service.dart';
 
 // Define color constants
@@ -20,37 +20,46 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
   final _otpController = TextEditingController();
   bool _isLoading = false;
   bool _showOtpField = false;
-  String? _phoneNumber;
-  String? _verificationId;
+  String? _email;
 
   void _requestOTP() async {
-    final phoneNumber = _phoneController.text.trim();
-    if (phoneNumber.isEmpty) return;
+    final email = _emailController.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email address')),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
     try {
-      final response = await OTPService.requestOTP(phoneNumber);
+      // In a real app, this would call Supabase to send OTP
+      // For mock, we simulate it via OTPService (or just direct mock)
+      // Since we are moving to Supabase, let's just simulate success for now
+      await Future.delayed(const Duration(seconds: 1));
+
+      // Mock OTP for demo
+      final response = {'otp': '123456', 'message': 'OTP sent to $email'};
 
       if (mounted) {
         setState(() {
           _isLoading = false;
           _showOtpField = true;
-          _phoneNumber = phoneNumber;
+          _email = email;
           // In a real app, you wouldn't show the OTP in the UI
-          // This is just for demo purposes
-          _otpController.text = response['otp'];
+          _otpController.text = response['otp']!;
         });
 
         // Show a snackbar with success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              response['message'],
+              response['message']!,
               style: const TextStyle(color: Colors.white),
             ),
             backgroundColor: _zinc900,
@@ -91,13 +100,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _verifyOTP() async {
     final otp = _otpController.text.trim();
-    if (otp.isEmpty || _phoneNumber == null) return;
+    if (otp.isEmpty || _email == null) return;
 
     setState(() => _isLoading = true);
 
     try {
       // Use AuthService to handle login and session creation
-      await AuthService.login(_phoneNumber!, otp);
+      await AuthService.login(_email!, otp);
 
       // Check if user has completed profile
       final user = await AuthService.getCurrentUser();
@@ -183,18 +192,14 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 48),
             if (!_showOtpField) ...[
               TextField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
                 autofocus: true,
                 enabled: !_isLoading,
                 style: const TextStyle(fontSize: 18, color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: AppLocalizations.of(
-                    context,
-                  )!.translate('enterPhoneNumber'),
-                  labelText: AppLocalizations.of(
-                    context,
-                  )!.translate('phoneNumber'),
+                  hintText: "Enter your email",
+                  labelText: "Email",
                   hintStyle: const TextStyle(color: _zinc500),
                   labelStyle: const TextStyle(color: _zinc500),
                   filled: true,
@@ -207,12 +212,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(color: _blue600, width: 2),
                   ),
-                  prefixIcon: const Icon(Icons.phone, color: _zinc500),
+                  prefixIcon: const Icon(Icons.email, color: _zinc500),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 16,
                   ),
                 ),
+                onSubmitted: (_) => _onSubmit(),
               ),
             ] else ...[
               TextField(
@@ -259,7 +265,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'OTP sent to $_phoneNumber',
+                'OTP sent to $_email',
                 style: const TextStyle(color: _zinc500, fontSize: 14),
               ),
               const SizedBox(height: 8),

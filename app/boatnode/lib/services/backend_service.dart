@@ -36,7 +36,7 @@ class BackendService {
     // In a real app, this would update the backend
     return User(
       id: user.id,
-      phoneNumber: user.phoneNumber,
+      email: user.email,
       displayName: displayName ?? user.displayName,
       role: role ?? user.role,
       villageId: villageId ?? user.villageId,
