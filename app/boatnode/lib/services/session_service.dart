@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/session.dart';
+import '../models/user.dart';
 
 class SessionService {
   static const String _sessionKey = 'user_session';
@@ -12,6 +13,7 @@ class SessionService {
 
   static Future<void> init() async {
     await _loadSession();
+    await _loadUser();
     await _loadPairingState();
     await _loadStatusInterval();
     await _loadGpsUpdateInterval();
@@ -71,8 +73,38 @@ class SessionService {
     }
   }
 
-  // Fixing the session loading logic is out of scope unless it blocks me.
-  // I'll add the pairing logic.
+  // --- User Persistence ---
+  static const String _userKey = 'user_profile';
+  static User? _currentUser;
+
+  static Future<void> _loadUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userJson = prefs.getString(_userKey);
+    if (userJson != null) {
+      try {
+        _currentUser = User.fromJson(jsonDecode(userJson));
+        print('SessionService: User loaded: ${_currentUser?.displayName}');
+      } catch (e) {
+        print('SessionService: Error loading user: $e');
+      }
+    }
+  }
+
+  static Future<void> saveUser(User user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_userKey, jsonEncode(user.toJson()));
+    _currentUser = user;
+  }
+
+  static Future<void> clearUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_userKey);
+    _currentUser = null;
+  }
+
+  static User? get currentUser => _currentUser;
+
+  // --- Pairing ---
 
   static Future<void> _loadPairingState() async {
     final prefs = await SharedPreferences.getInstance();
@@ -113,6 +145,7 @@ class SessionService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_sessionKey);
     _currentSession = null;
+    await clearUser(); // Also clear user data
   }
 
   static Session? get currentSession {

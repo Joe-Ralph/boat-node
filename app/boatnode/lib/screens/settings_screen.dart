@@ -8,6 +8,10 @@ import 'package:boatnode/services/hardware_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:boatnode/screens/debug_screen.dart';
 import 'package:boatnode/theme/app_theme.dart';
+import 'package:boatnode/screens/login_screen.dart';
+import 'package:boatnode/models/user.dart';
+import 'package:boatnode/screens/qr_code_screen.dart';
+import 'package:boatnode/screens/qr_scan_screen.dart';
 
 // Extension to handle null safety for localization
 extension LocalizationExtension on BuildContext {
@@ -31,6 +35,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     'ml': 'മലയാളം',
     'hi': 'हिंदी',
   };
+
+  User? _user;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUser();
+  }
+
+  Future<void> _loadUser() async {
+    final user = await AuthService.getCurrentUser();
+    if (mounted) {
+      setState(() {
+        _user = user;
+      });
+    }
+  }
 
   void _selectLanguage(String languageCode) {
     final localeProvider = Provider.of<LocaleProvider>(context, listen: false);
@@ -85,9 +106,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       // Navigate to login screen and remove all previous routes
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
+        Navigator.pushAndRemoveUntil(
           context,
-          '/login',
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
           (route) => false, // Remove all previous routes
         );
       }
@@ -140,6 +161,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 24),
             _buildGpsIntervalSlider(),
             const SizedBox(height: 24),
+            if (_user != null) ...[
+              if (_user!.role == 'owner' && SessionService.isPaired)
+                _buildSettingsButton(
+                  icon: Icons.qr_code,
+                  label: "Show QR Code",
+                  onTap: () {
+                    // We need a Boat object here. For now, mock one or fetch it.
+                    // Assuming HardwareService.getBoatStatus returns current boat
+                    HardwareService.getBoatStatus('123').then((boat) {
+                      if (boat != null && mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => QRCodeScreen(boat: boat),
+                          ),
+                        );
+                      } else {
+                        _showSnackBar("Boat data not available", isError: true);
+                      }
+                    });
+                  },
+                ),
+              const SizedBox(height: 12),
+              // Only show Scan QR for non-owners
+              if (_user!.role != 'owner')
+                _buildSettingsButton(
+                  icon: Icons.qr_code_scanner,
+                  label: "Scan QR Code",
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const QRScanScreen()),
+                    );
+                  },
+                ),
+              const SizedBox(height: 24),
+            ],
             if (SessionService.isPaired)
               SizedBox(
                 width: double.infinity,
@@ -459,6 +517,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kZinc800,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

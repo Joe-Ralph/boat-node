@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:boatnode/services/session_service.dart';
 import 'package:boatnode/models/session.dart';
 import 'package:boatnode/models/user.dart';
+import 'package:boatnode/services/backend_service.dart';
 
 class AuthService {
   // Mock method to validate session with a server
@@ -16,8 +17,7 @@ class AuthService {
       return false;
     }
 
-    // Simulate 10% chance of token being invalid (for demo purposes)
-    return DateTime.now().millisecondsSinceEpoch % 10 != 0;
+    return true;
   }
 
   // Mock login that returns a session
@@ -38,7 +38,18 @@ class AuthService {
       expiresAt: DateTime.now().add(const Duration(days: 7)),
     );
 
+    // Initialize mock user for this session (Fresh login -> No role)
+    final user = User(
+      id: 101,
+      displayName: session.displayName,
+      phoneNumber: phoneNumber,
+      role: null, // Force null role to trigger profile screen
+      villageId: null,
+    );
+
     await SessionService.saveSession(session);
+    await SessionService.saveUser(user);
+
     return session;
   }
 
@@ -46,13 +57,56 @@ class AuthService {
     await SessionService.clearSession();
   }
 
+  static Future<User> updateProfile(
+    User user, {
+    String? displayName,
+    String? role,
+    String? villageId,
+  }) async {
+    final updatedUser = await BackendService.updateProfile(
+      user,
+      displayName: displayName,
+      role: role,
+      villageId: villageId,
+    );
+
+    // Update local mock user
+    await SessionService.saveUser(updatedUser);
+
+    return updatedUser;
+  }
+
+  static Future<void> joinBoat(String qrCode) async {
+    final result = await BackendService.joinBoatByQR(qrCode);
+    // In a real app, we would update the user's session/profile on the server
+    // and refresh the local user object.
+    // For mock, we assume the backend update happened.
+    print("Joined boat: ${result['boat_name']}");
+  }
+
   static Future<User?> getCurrentUser() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    // Mock user
-    return User(
-      id: 101,
-      displayName: "Captain Jack",
-      phoneNumber: "+919876543210",
-    );
+
+    // Return persisted user from SessionService
+    if (SessionService.currentUser != null) {
+      return SessionService.currentUser;
+    }
+
+    // Fallback if session exists but user not found (shouldn't happen with new logic)
+    final session = SessionService.currentSession;
+    if (session != null) {
+      final user = User(
+        id: 101,
+        displayName: session.displayName,
+        phoneNumber: "+919876543210", // Fallback phone
+        role: null,
+        villageId: null,
+      );
+      // Save this fallback so we don't create it again
+      await SessionService.saveUser(user);
+      return user;
+    }
+
+    return null;
   }
 }

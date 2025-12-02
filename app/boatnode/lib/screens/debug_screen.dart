@@ -97,6 +97,24 @@ class _DebugScreenState extends State<DebugScreen> {
                 });
               },
             ),
+            SwitchListTile(
+              title: const Text(
+                "Simulate Connection Failure",
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                "Force boat status to fail",
+                style: TextStyle(color: Colors.white70),
+              ),
+              value: HardwareService.isConnectionFailureSimulated,
+              activeColor: kRed600,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (bool value) {
+                setState(() {
+                  HardwareService.setSimulateConnectionFailure(value);
+                });
+              },
+            ),
             const SizedBox(height: 32),
             const Text(
               "Mock Battery Level",

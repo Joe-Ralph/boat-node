@@ -1,5 +1,5 @@
 {
-  "appTitle": "BoatNode",
+  "appTitle": "Neduvaai",
   "settings": "Settings",
   "language": "LANGUAGE",
   "english": "English",
@@ -7,8 +7,8 @@
   "malayalam": "Malayalam",
   "hindi": "Hindi",
   "logout": "Logout",
-  "version": "BoatNode Simulation Build v1.0",
-  "loginTitle": "Welcome to BoatNode",
+  "version": "Neduvaai Simulation Build v1.0",
+  "loginTitle": "Welcome to Neduvaai",
   "loginSubtitle": "Sign in to continue",
   "phoneNumber": "Phone Number",
   "enterPhoneNumber": "Enter your phone number",
@@ -73,5 +73,6 @@
   "statusUpdateInterval": "Status Update Interval",
   "gpsUpdateInterval": "GPS Update Interval",
   "pairDeviceButton": "PAIR DEVICE",
+  "connectDevice": "Connect Device",
   "seconds": "seconds"
 }

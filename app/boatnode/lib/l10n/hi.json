@@ -1,5 +1,5 @@
 {
-  "appTitle": "बोटनोड",
+  "appTitle": "नेडुवाय",
   "settings": "सेटिंग्स",
   "language": "भाषा",
   "english": "अंग्रेज़ी",
@@ -7,8 +7,8 @@
   "malayalam": "मलयालम",
   "hindi": "हिंदी",
   "logout": "लॉग आउट",
-  "version": "बोटनोड सिमुलेशन बिल्ड v1.0",
-  "loginTitle": "बोटनोड में आपका स्वागत है",
+  "version": "नेडुवाय सिमुलेशन बिल्ड v1.0",
+  "loginTitle": "नेडुवाय में आपका स्वागत है",
   "loginSubtitle": "जारी रखने के लिए साइन इन करें",
   "phoneNumber": "फ़ोन नंबर",
   "enterPhoneNumber": "अपना फ़ोन नंबर दर्ज करें",
@@ -64,5 +64,7 @@
   "lowBatteryTitle": "बैटरी कम है",
   "lowBatteryMessage": "आपकी नाव मॉड्यूल बैटरी 20% से कम है। कृपया इसे चार्ज करें।",
   "debugMenu": "डीबग मेनू",
-  "triggerNotification": "कम बैटरी अधिसूचना ट्रिगर करें"
+  "triggerNotification": "कम बैटरी अधिसूचना ट्रिगर करें",
+  "pairDeviceButton": "डिवाइस पेयर करें",
+  "connectDevice": "डिवाइस से कनेक्ट करें"
 }

@@ -1,4 +1,5 @@
 import 'package:boatnode/screens/dashboard_screen.dart';
+import 'package:boatnode/screens/profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
@@ -98,13 +99,25 @@ class _LoginScreenState extends State<LoginScreen> {
       // Use AuthService to handle login and session creation
       await AuthService.login(_phoneNumber!, otp);
 
+      // Check if user has completed profile
+      final user = await AuthService.getCurrentUser();
+
       if (mounted) {
         setState(() => _isLoading = false);
-        // Navigate to dashboard on successful verification
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const DashboardScreen()),
-        );
+
+        if (user != null && user.role == null) {
+          // Navigate to Profile Screen
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => ProfileScreen(user: user)),
+          );
+        } else {
+          // Navigate to dashboard on successful verification
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const DashboardScreen()),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -146,14 +159,14 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: _blue600,
-                borderRadius: BorderRadius.circular(20),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.asset(
+                'assets/icon.png',
+                width: 80,
+                height: 80,
+                fit: BoxFit.cover,
               ),
-              child: const Icon(Icons.sailing, size: 40, color: Colors.white),
             ),
             const SizedBox(height: 24),
             Text(

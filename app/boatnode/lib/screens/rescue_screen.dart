@@ -156,6 +156,7 @@ class _RescueScreenState extends State<RescueScreen>
                                               fontWeight: FontWeight.w900,
                                               color: Colors.white,
                                             ),
+                                            textAlign: TextAlign.center,
                                           ),
                                         ],
                                       ),

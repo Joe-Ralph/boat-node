@@ -9,6 +9,8 @@ import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'services/session_service.dart';
 import 'services/auth_service.dart';
+import 'screens/profile_screen.dart';
+import 'models/user.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -46,7 +48,7 @@ class BoatNodeApp extends StatelessWidget {
     return Consumer<LocaleProvider>(
       builder: (context, localeProvider, _) {
         return MaterialApp(
-          title: 'BoatNode',
+          title: 'Neduvaai',
           debugShowCheckedModeBanner: false,
           theme: appTheme,
           locale: localeProvider.locale,
@@ -72,10 +74,27 @@ class BoatNodeApp extends StatelessWidget {
                 );
               }
 
-              // If we have a valid session, go to dashboard, otherwise show login
-              return snapshot.data == true
-                  ? const DashboardScreen()
-                  : const LoginScreen();
+              // If we have a valid session, check user profile
+              if (snapshot.data == true) {
+                return FutureBuilder<User?>(
+                  future: AuthService.getCurrentUser(),
+                  builder: (context, userSnapshot) {
+                    if (userSnapshot.connectionState != ConnectionState.done) {
+                      return const Scaffold(
+                        body: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+
+                    final user = userSnapshot.data;
+                    if (user != null && user.role == null) {
+                      return ProfileScreen(user: user);
+                    }
+                    return const DashboardScreen();
+                  },
+                );
+              }
+
+              return const LoginScreen();
             },
           ),
         );

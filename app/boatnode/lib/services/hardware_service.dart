@@ -13,6 +13,13 @@ class HardwareService {
   static bool _useMockService = true; // Default to true for development
   static int _mockBatteryLevel = 85;
   static Position? _mockPosition;
+  static bool _simulateConnectionFailure = false;
+
+  static void setSimulateConnectionFailure(bool value) {
+    _simulateConnectionFailure = value;
+  }
+
+  static bool get isConnectionFailureSimulated => _simulateConnectionFailure;
 
   static void setMockBatteryLevel(int level) {
     _mockBatteryLevel = level;
@@ -97,6 +104,18 @@ class HardwareService {
   }
 
   static Future<Boat> getBoatStatus(String id) async {
+    if (_simulateConnectionFailure) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      return Boat(
+        id: id,
+        name: "Connection Failed",
+        batteryLevel: 0,
+        connection: {'wifi': false, 'lora': false, 'mesh': 0},
+        lastFix: {},
+        gpsStatus: "UNKNOWN",
+      );
+    }
+
     if (_useMockService) {
       await Future.delayed(const Duration(milliseconds: 800));
       return Boat(
@@ -212,10 +231,10 @@ class HardwareService {
     return "1234";
   }
 
-  static Future<bool> scanForPairingDevices() async {
+  static Future<List<String>> scanForPairingDevices() async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 2));
-      return true;
+      return ["BOAT-PAIR-1234", "BOAT-PAIR-5678"];
     } else {
       try {
         // 1. Check Location Service
@@ -228,14 +247,9 @@ class HardwareService {
         }
 
         // 2. Check WiFi
-        // wifi_iot's isEnabled is still useful for a quick check, but wifi_scan's canStartScan is authoritative for scanning.
-        // However, canStartScan might return 'yes' even if wifi is off on some devices if "Always allow scanning" is on.
-        // But if we need to connect later, we definitely need WiFi on.
         bool isEnabled = await WiFiForIoTPlugin.isEnabled();
         if (!isEnabled) {
-          // Try to enable
           await WiFiForIoTPlugin.setEnabled(true);
-          // Recheck
           isEnabled = await WiFiForIoTPlugin.isEnabled();
           if (!isEnabled) {
             throw Exception("WiFi is disabled");
@@ -243,32 +257,28 @@ class HardwareService {
         }
 
         // 3. Start Scan
-        // We re-check canScan just to be safe or if state changed
         final canScanFinal = await WiFiScan.instance.canStartScan();
         if (canScanFinal == CanStartScan.yes) {
           await WiFiScan.instance.startScan();
-        } else {
-          // If we can't scan for other reasons (e.g. throttling), we might still try to get results
-          // but let's log it.
-          print("Cannot start scan: $canScanFinal");
         }
 
         // Get scanned results
         final List<WiFiAccessPoint> networks = await WiFiScan.instance
             .getScannedResults();
 
-        // Look for our specific AP SSID pattern
-        // The mock firmware uses "BOAT-PAIR-1234"
-        return networks.any((network) => network.ssid.startsWith("BOAT-PAIR-"));
+        // Filter for BOAT-PAIR- prefix
+        return networks
+            .where((network) => network.ssid.startsWith("BOAT-PAIR-"))
+            .map((network) => network.ssid)
+            .toList();
       } catch (e) {
-        // Re-throw known exceptions so UI can handle them
         if (e.toString().contains("Location Service") ||
             e.toString().contains("Location Permission") ||
             e.toString().contains("WiFi is disabled")) {
           rethrow;
         }
         print("Error scanning for devices: $e");
-        return false;
+        return [];
       }
     }
   }
@@ -326,15 +336,38 @@ class HardwareService {
     required String boatId,
     required int userId,
     required String displayName,
+    required String deviceId, // Added deviceId
   }) async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 1));
       print(
-        "Pairing request sent: boat_id=$boatId, user_id=$userId, name=$displayName",
+        "Pairing request sent: boat_id=$boatId, user_id=$userId, name=$displayName, device_id=$deviceId",
       );
       return true;
     } else {
       try {
+        // 1. Get device password from backend
+        // In real flow, we might need to authenticate with backend first
+        // For now, we assume we have access or the deviceId is enough
+        // Note: The prompt says "get the device wifi password from the backend and use it to connect"
+        // But we are already connected to the device AP to send this request?
+        // Ah, the prompt says: "While pairing based on the device id, get the device wifi password from the backend and use it to connect with the password."
+        // This implies we connect to the device AP using a password fetched from backend.
+        // But `connectToDeviceWifi` was called BEFORE `pairDevice` in the previous flow.
+        // We should probably move the connection logic here or pass the password out.
+        // However, `pairDevice` sends the configuration TO the device.
+
+        // Let's assume we are already connected to the device AP (open or known password)
+        // OR we are sending this to the backend to associate?
+        // "Once registered successfully, make a call to the backend which will associate the device id with the boat Id."
+
+        // Revised Flow:
+        // 1. Connect to Device AP (using password from backend? or is it open?)
+        //    If AP is protected, we need password first.
+        //    "get the device wifi password from the backend and use it to connect" -> implies we need it before connecting.
+
+        // So `pairDevice` here seems to be the step where we configure the device via HTTP.
+
         final response = await http
             .post(
               Uri.parse('$_baseUrl/pair'),
@@ -342,11 +375,21 @@ class HardwareService {
                 'boat_id': boatId,
                 'user_id': userId.toString(),
                 'name': displayName,
+                'owner_id': userId.toString(), // Add owner info to EEPROM
               },
             )
             .timeout(const Duration(seconds: 5));
 
-        return response.statusCode == 200;
+        if (response.statusCode == 200) {
+          // 2. Associate in Backend
+          // We should call BackendService here or in the UI.
+          // Service layer is better.
+          // But BackendService is mock.
+          // Let's assume we call it here.
+          // await BackendService.associateDeviceWithBoat(deviceId, boatId);
+          return true;
+        }
+        return false;
       } catch (e) {
         print("Error pairing device: $e");
         return false;

@@ -14,6 +14,10 @@ import 'package:boatnode/services/geofence_service.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter/material.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
+import 'package:boatnode/services/auth_service.dart';
+import 'package:boatnode/models/user.dart';
+import 'package:boatnode/screens/qr_scan_screen.dart';
+import 'package:boatnode/screens/qr_code_screen.dart';
 import 'package:geolocator/geolocator.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -30,6 +34,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _hasInternet = false;
   Position? _currentPosition;
   bool _isNearBorder = false;
+  bool _isConnecting = false;
+
+  User? _user;
 
   @override
   void initState() {
@@ -80,6 +87,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadData() async {
+    final user = await AuthService.getCurrentUser();
+    if (mounted) {
+      setState(() {
+        _user = user;
+      });
+    }
+
     if (!SessionService.isPaired) {
       final position = await HardwareService.getCurrentLocation();
       if (mounted) {
@@ -132,6 +146,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _isNearBorder = nearBorder;
       });
+    }
+  }
+
+  Future<void> _connectToDevice() async {
+    setState(() => _isConnecting = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)!.translate('connectingToDevice'),
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    // Try to connect to the known SSID
+    // In a real scenario, we might need to know the specific SSID if it changes per device
+    // But assuming 'pairme-1234' is the password for the AP
+    await HardwareService.connectToDeviceWifi('pairme-1234');
+
+    // Wait a bit for connection to stabilize
+    await Future.delayed(const Duration(seconds: 3));
+
+    // Refresh data to check connection
+    await _loadData();
+
+    if (mounted) {
+      setState(() => _isConnecting = false);
+      if (_boat != null && _boat!.name != "Connection Failed") {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Connected successfully!"),
+            backgroundColor: kGreen500,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Connection failed. Please ensure device is on."),
+            backgroundColor: kRed600,
+          ),
+        );
+      }
     }
   }
 
@@ -208,7 +264,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Expanded(flex: 1, child: _buildSyncButton()),
+                    Expanded(
+                      flex: 1,
+                      child: Row(
+                        children: [
+                          Expanded(child: _buildSyncButton()),
+                          if (_user?.role == 'owner' &&
+                              SessionService.isPaired) ...[
+                            const SizedBox(width: 12),
+                            Expanded(child: _buildShowQRButton()),
+                          ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -267,75 +335,109 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildActionGrid() {
     final isPaired = SessionService.isPaired;
+    final isConnected = _boat != null && _boat!.name != "Connection Failed";
+    final role = _user?.role;
+
+    // Logic for button display
+    IconData icon;
+    String label;
+    VoidCallback onTap;
+    bool showLoading = false;
+
+    if (isPaired) {
+      // User is associated with a boat
+      if (role == 'land_user' || role == 'land_admin') {
+        // Land users just track, no connection
+        icon = Icons.map;
+        label = AppLocalizations.of(
+          context,
+        )!.translate('nearbyBoats'); // Or "Track Boat"
+        onTap = () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const NearbyScreen()),
+          );
+        };
+      } else {
+        // Owner or Joiner - Can connect to device
+        if (isConnected) {
+          icon = Icons.radar;
+          label = AppLocalizations.of(context)!.translate('nearbyBoats');
+          onTap = () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NearbyScreen()),
+            );
+          };
+        } else {
+          icon = Icons.wifi_find;
+          label = AppLocalizations.of(context)!.translate('connectDevice');
+          showLoading = _isConnecting;
+          onTap = () async {
+            if (!_isConnecting) {
+              await _connectToDevice();
+            }
+          };
+        }
+      }
+    } else {
+      // No boat associated
+      if (role == 'owner') {
+        icon = Icons.link;
+        label = AppLocalizations.of(context)!.translate('pairDeviceButton');
+        onTap = () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const PairingScreen()),
+          );
+          if (result == true) {
+            _handlePairingSuccess();
+          }
+        };
+      } else {
+        // Joiner or Land User - Scan QR
+        icon = Icons.qr_code_scanner;
+        label = "Scan QR"; // TODO: Localize
+        onTap = () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const QRScanScreen()),
+          );
+        };
+      }
+    }
 
     return Container(
       decoration: BoxDecoration(
-        color: isPaired ? kZinc800 : kGreen500,
+        color: isPaired ? (isConnected ? kZinc800 : kBlue600) : kGreen500,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () async {
-            if (isPaired) {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NearbyScreen()),
-              );
-            } else {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PairingScreen()),
-              );
-              if (result == true) {
-                _loadData(); // Refresh data if pairing was successful
-                _startStatusTimer(); // Restart timer with new interval
-
-                // Trigger background map caching
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        "Pairing successful. Caching offline maps...",
-                      ),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                  // Get current location for caching center
-                  HardwareService.getCurrentLocation().then((pos) {
-                    if (pos != null && mounted) {
-                      MapService.cacheArea(
-                        context,
-                        pos.latitude,
-                        pos.longitude,
-                      );
-                    }
-                  });
-                }
-              }
-            }
-            if (mounted) setState(() {});
-          },
+          onTap: onTap,
           borderRadius: BorderRadius.circular(20),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 12.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  isPaired ? Icons.radar : Icons.link,
-                  size: 28,
-                  color: Colors.white,
-                ),
-                SizedBox(height: 8),
+                if (showLoading)
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                else
+                  Icon(icon, size: 28, color: Colors.white),
+                const SizedBox(height: 8),
                 Text(
-                  isPaired
-                      ? AppLocalizations.of(context)!.translate('nearbyBoats')
-                      : AppLocalizations.of(
-                          context,
-                        )!.translate('pairDeviceButton'),
+                  label,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
@@ -347,6 +449,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  void _handlePairingSuccess() {
+    print("Dashboard: Pairing success handled.");
+    try {
+      _loadData();
+      _startStatusTimer();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Pairing successful. Caching offline maps..."),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        HardwareService.getCurrentLocation().then((pos) {
+          if (pos != null && mounted) {
+            print(
+              "Dashboard: Caching map area for ${pos.latitude}, ${pos.longitude}",
+            );
+            MapService.cacheArea(
+              context,
+              pos.latitude,
+              pos.longitude,
+            ).catchError((e) {
+              print("Dashboard: Map caching error: $e");
+            });
+          }
+        });
+      }
+    } catch (e) {
+      print("Dashboard: Error in _handlePairingSuccess: $e");
+    }
   }
 
   Widget _buildSettingsButton() {
@@ -416,6 +550,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     context,
                   )!.translate('syncStatus').toUpperCase(),
                   style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShowQRButton() {
+    return Container(
+      height: double.infinity,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: kZinc800,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            if (_boat != null) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => QRCodeScreen(boat: _boat!)),
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Boat data not available yet"),
+                  backgroundColor: kRed600,
+                ),
+              );
+            }
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.qr_code, size: 24, color: Colors.white),
+                const SizedBox(height: 6),
+                Text(
+                  "SHOW QR",
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.bold,

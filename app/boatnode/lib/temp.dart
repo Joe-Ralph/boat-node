@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math';
 
 void main() {
   runApp(const BoatNodeApp());
