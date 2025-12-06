@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:boatnode/services/backend_service.dart';
 import 'package:boatnode/services/auth_service.dart';
+import 'package:boatnode/services/session_service.dart';
+import '../utils/ui_utils.dart';
 import 'package:boatnode/theme/app_theme.dart';
-import 'package:boatnode/screens/dashboard_screen.dart';
 
 class QRScanScreen extends StatefulWidget {
   const QRScanScreen({super.key});
@@ -26,38 +28,44 @@ class _QRScanScreenState extends State<QRScanScreen> {
     final List<Barcode> barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
 
-    final qrCode = barcodes.first.rawValue;
-    if (qrCode == null) return;
+    final rawQrData = barcodes.first.rawValue;
+    if (rawQrData == null) return;
 
     setState(() => _isProcessing = true);
     _controller.stop(); // Pause scanning
 
     try {
-      await AuthService.joinBoat(qrCode);
+      // Call new Backend Service for joining
+      final result = await BackendService.joinBoatByQR(rawQrData);
+
+      final boatName = result['boat_name'] ?? 'Unknown Boat';
+      final boatId = result['boat_id'];
+
+      // Persist the joined boat ID locally
+      final currentUser = await AuthService.getCurrentUser();
+      if (currentUser != null && boatId != null) {
+        final updatedUser = currentUser.copyWith(boatId: boatId.toString());
+        await SessionService.saveUser(updatedUser);
+      }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Successfully joined boat!"),
-            backgroundColor: kGreen500,
-          ),
+        UiUtils.showSnackBar(
+          context,
+          "Successfully joined boat: $boatName",
+          isSuccess: true,
         );
-        // Navigate to dashboard
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          (route) => false,
-        );
+        Navigator.pop(context, true); // Return success
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Failed to join: $e"),
-            backgroundColor: kRed600,
-          ),
-        );
+        // Resume scanning on error
+        _controller.start();
         setState(() => _isProcessing = false);
-        _controller.start(); // Resume scanning
+        UiUtils.showSnackBar(
+          context,
+          "Failed to join boat: ${e.toString().replaceAll('Exception:', '').trim()}",
+          isError: true,
+        );
       }
     }
   }

@@ -4,6 +4,7 @@ import 'package:boatnode/services/auth_service.dart';
 import 'package:boatnode/services/backend_service.dart';
 import 'package:boatnode/theme/app_theme.dart';
 import 'package:boatnode/screens/dashboard_screen.dart';
+import '../utils/ui_utils.dart';
 
 class ProfileScreen extends StatefulWidget {
   final User user;
@@ -17,9 +18,10 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameController;
+  late TextEditingController _boatRegistrationController;
   String? _selectedRole;
   String? _selectedVillageId;
-  List<Map<String, String>> _villages = [];
+  List<Map<String, dynamic>> _villages = [];
   bool _isLoading = false;
 
   final List<Map<String, String>> _roles = [
@@ -33,6 +35,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.user.displayName);
+    _boatRegistrationController = TextEditingController();
     _selectedRole = widget.user.role;
     _selectedVillageId = widget.user.villageId;
     _loadVillages();
@@ -50,21 +53,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _boatRegistrationController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedRole == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please select a role')));
+      UiUtils.showSnackBar(context, 'Please select a role', isError: true);
       return;
     }
     if (_selectedVillageId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please select a village')));
+      UiUtils.showSnackBar(context, 'Please select a village', isError: true);
       return;
     }
 
@@ -76,6 +76,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         displayName: _nameController.text,
         role: _selectedRole,
         villageId: _selectedVillageId,
+        boatRegistrationNumber: _boatRegistrationController.text,
       );
 
       if (mounted) {
@@ -86,9 +87,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
+        UiUtils.showSnackBar(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error updating profile: $e')));
+          'Error updating profile: $e',
+          isError: true,
+        );
       }
     } finally {
       if (mounted) {
@@ -154,7 +157,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               // Role Dropdown
               DropdownButtonFormField<String>(
-                value: _selectedRole,
+                initialValue: _selectedRole,
                 dropdownColor: kZinc900,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
@@ -194,9 +197,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               const SizedBox(height: 24),
 
+              // Boat Registration Number (Only for Owners)
+              if (_selectedRole == 'owner') ...[
+                TextFormField(
+                  controller: _boatRegistrationController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: "Boat Registration Number",
+                    labelStyle: const TextStyle(color: kZinc500),
+                    filled: true,
+                    fillColor: kZinc900,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.directions_boat,
+                      color: kZinc500,
+                    ),
+                  ),
+                  validator: (value) {
+                    if (_selectedRole == 'owner' &&
+                        (value == null || value.isEmpty)) {
+                      return 'Please enter boat registration number';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 24),
+              ],
+
               // Village Dropdown
               DropdownButtonFormField<String>(
-                value: _selectedVillageId,
+                initialValue: _selectedVillageId,
                 dropdownColor: kZinc900,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
@@ -210,10 +243,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   prefixIcon: const Icon(Icons.location_city, color: kZinc500),
                 ),
-                items: _villages.map((village) {
-                  return DropdownMenuItem(
-                    value: village['id'],
-                    child: Text("${village['name']} (${village['district']})"),
+                items: _villages.map<DropdownMenuItem<String>>((village) {
+                  return DropdownMenuItem<String>(
+                    value: village['id'].toString(),
+                    child: Text(village['name']),
                   );
                 }).toList(),
                 onChanged: (value) {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'dart:convert';
 import 'package:boatnode/theme/app_theme.dart';
 import 'package:boatnode/models/boat.dart';
 
@@ -15,9 +16,25 @@ class QRCodeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Format: BOAT:boatId:deviceId:password
-    // In real app, this should be signed/encrypted
-    final qrData = "BOAT:${boat.id}:device_id_placeholder:$devicePassword";
+    // Format: BOAT_V2:<boatId>:<ownerId>:<password>
+    // We need ownerId here. Assuming boat.ownerId is available or passed.
+    // Since Boat model might not have ownerId directly populated in some contexts,
+    // we use the current user's ID if they are the owner showing it.
+
+    // In a real scenario, we should ensure we have the ownerId.
+    // For now, let's assume the current user IS the owner if they are seeing this screen.
+    // Or we fetch it. But to be safe, let's use a placeholder if missing so logic doesn't crash,
+    // but the validator will fail if it's wrong.
+
+    // BETTER APPROACH: The `boat` object usually comes from `HardwareService` or `BackendService`.
+    // Let's modify the QR string construction.
+    final ownerId = boat.ownerId ?? 'unknown_owner';
+
+    // Construct raw data
+    final rawData = "BOAT_V2:${boat.id}:$ownerId:$devicePassword";
+
+    // Base64 Encode to obfuscate
+    final qrData = base64Encode(utf8.encode(rawData));
 
     return Scaffold(
       backgroundColor: kZinc950,

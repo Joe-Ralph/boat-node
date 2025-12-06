@@ -27,6 +27,24 @@ class User {
     );
   }
 
+  User copyWith({
+    String? id,
+    String? displayName,
+    String? email,
+    String? role,
+    String? villageId,
+    String? boatId,
+  }) {
+    return User(
+      id: id ?? this.id,
+      displayName: displayName ?? this.displayName,
+      email: email ?? this.email,
+      role: role ?? this.role,
+      villageId: villageId ?? this.villageId,
+      boatId: boatId ?? this.boatId,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class LocationService {
   static StreamSubscription<Position>? _positionStreamSubscription;
@@ -48,7 +49,7 @@ class LocationService {
     try {
       return await Geolocator.getCurrentPosition();
     } catch (e) {
-      print("Error getting current location: $e");
+      LogService.e("Error getting current location", e);
       return null;
     }
   }

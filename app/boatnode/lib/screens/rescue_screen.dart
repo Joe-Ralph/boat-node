@@ -101,7 +101,11 @@ class _RescueScreenState extends State<RescueScreen>
                 Align(
                   alignment: Alignment.topLeft,
                   child: IconButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      if (Navigator.canPop(context)) {
+                        Navigator.pop(context);
+                      }
+                    },
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
                   ),
                 ),

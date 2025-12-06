@@ -12,6 +12,8 @@ import 'services/auth_service.dart';
 import 'screens/profile_screen.dart';
 import 'models/user.dart';
 import 'theme/app_theme.dart';
+import 'services/background_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 
 void main() async {
   // Ensure Flutter binding is initialized
@@ -19,6 +21,19 @@ void main() async {
 
   // Initialize session service
   await SessionService.init();
+
+  // Initialize Supabase
+  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+
+  if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
+    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  } else {
+    debugPrint("Warning: Supabase keys not found in environment variables.");
+  }
+
+  // Initialize background service
+  await BackgroundService.initializeService();
 
   runApp(
     ChangeNotifierProvider(

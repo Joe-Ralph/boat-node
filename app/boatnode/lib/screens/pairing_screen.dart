@@ -3,9 +3,11 @@ import 'package:boatnode/l10n/app_localizations.dart';
 import 'package:boatnode/services/hardware_service.dart';
 import 'package:boatnode/services/auth_service.dart';
 import 'package:boatnode/services/session_service.dart';
+import 'package:boatnode/services/backend_service.dart';
 import 'package:boatnode/theme/app_theme.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class PairingScreen extends StatefulWidget {
   const PairingScreen({super.key});
@@ -47,8 +49,36 @@ class _PairingScreenState extends State<PairingScreen>
     });
 
     try {
-      // 1. Get boat ID from server
-      final boatId = await HardwareService.getBoatId();
+      // 1. Get boat ID from Backend/Persisted Session (NOT from device)
+      String boatId;
+      final currentUser = await AuthService.getCurrentUser();
+
+      if (currentUser?.boatId != null) {
+        boatId = currentUser!.boatId!;
+      } else {
+        // Fallback: This shouldn't happen for Owners if Dashboard loaded correctly.
+        // But if it does, try to fetch or error out.
+        try {
+          final boats = await BackendService.getUserBoats(
+            currentUser?.id ?? '',
+          );
+          if (boats.isNotEmpty) {
+            boatId = boats.first['id'].toString();
+          } else {
+            // For Joiners, they might not have a boat yet?
+            // But pairing is usually for OWNERS setting up the device.
+            // Joiners scan QR.
+            // If Owner has no boat, they should probably Register one first?
+            // For now, let's allow it to fail or use a placeholder if we must,
+            // but user requested BACKEND ID.
+            throw Exception(
+              "No registered boat found for this user. Please contact support.",
+            );
+          }
+        } catch (e) {
+          throw Exception("Could not retrieve Boat ID for pairing: $e");
+        }
+      }
 
       // Request Location Permission for Wi-Fi scanning
       var status = await Permission.location.status;
@@ -133,12 +163,17 @@ class _PairingScreenState extends State<PairingScreen>
 
       // 3. Connect to the device's Wi-Fi
       // Fetch password from backend first
-      // In a real scenario, we might need to be connected to internet to get password
-      // But we are about to connect to device which has no internet.
-      // So we must fetch password BEFORE connecting to device.
-      // Assuming we have internet now (mobile data).
+      String devicePassword;
+      try {
+        devicePassword = await BackendService.getDevicePassword(deviceId);
+      } catch (e) {
+        LogService.e('Error fetching password', e);
+        // Fallback or rethrow? For now, let's try to connect with a default or fail.
+        // If we can't get the password, we can't connect.
+        throw Exception('Could not retrieve password for device $deviceId');
+      }
 
-      // Note: HardwareService.connectToDeviceWifi takes a password.
+      await HardwareService.connectToDeviceWifi(devicePassword);
       // We need to fetch it.
       // But wait, `connectToDeviceWifi` in previous mock used hardcoded 'pairme-1234'.
       // We should use `BackendService` to get password if possible, or use a default pattern.
@@ -155,21 +190,12 @@ class _PairingScreenState extends State<PairingScreen>
       // Let's fetch password via HardwareService helper or just assume a pattern for now to keep it simple
       // or add a method in HardwareService to get password.
       // Actually, let's just use 'pairme-$deviceId' as the password pattern for this mock.
-      final devicePassword = 'pairme-$deviceId';
-
-      await HardwareService.connectToDeviceWifi(devicePassword);
+      // final devicePassword = 'pairme-$deviceId'; // Mock password pattern
+      // await HardwareService.connectToDeviceWifi(devicePassword);
 
       // 4. Send pairing request
       final user = await AuthService.getCurrentUser();
       if (user == null) throw Exception('User not logged in');
-
-      // Validate boatId is numeric and within uint16 range
-      final boatIdInt = int.tryParse(boatId);
-      if (boatIdInt == null || boatIdInt < 0 || boatIdInt > 65535) {
-        throw Exception(
-          'Invalid Boat ID: Must be a number between 0 and 65535',
-        );
-      }
 
       final result = await HardwareService.pairDevice(
         boatId: boatId,
@@ -181,8 +207,22 @@ class _PairingScreenState extends State<PairingScreen>
       if (!mounted) return;
 
       if (result) {
+        // Fetch valid Backend ID
+        String finalBoatId = boatId;
+        try {
+          final boats = await BackendService.getUserBoats(user.id);
+          if (boats.isNotEmpty) {
+            finalBoatId = boats.first['id'].toString();
+            LogService.i('Backend Boat ID found: $finalBoatId');
+          } else {
+            LogService.w('No backend boat found for user. Using Hardware ID.');
+          }
+        } catch (e) {
+          LogService.e('Failed to fetch backend boat ID', e);
+        }
+
         // Save pairing state
-        await SessionService.savePairingState(true, boatId);
+        await SessionService.savePairingState(true, finalBoatId);
 
         setState(() {
           _isPaired = true;

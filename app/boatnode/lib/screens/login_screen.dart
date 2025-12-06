@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../l10n/app_localizations.dart';
 
 import '../services/auth_service.dart';
+import '../utils/ui_utils.dart';
 
 // Define color constants
 const Color _zinc500 = Color(0xFF71717A);
@@ -29,70 +30,36 @@ class _LoginScreenState extends State<LoginScreen> {
   void _requestOTP() async {
     final email = _emailController.text.trim();
     if (email.isEmpty || !email.contains('@')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid email address')),
-      );
+      if (email.isEmpty || !email.contains('@')) {
+        UiUtils.showSnackBar(context, 'Please enter a valid email address');
+        return;
+      }
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // In a real app, this would call Supabase to send OTP
-      // For mock, we simulate it via OTPService (or just direct mock)
-      // Since we are moving to Supabase, let's just simulate success for now
-      await Future.delayed(const Duration(seconds: 1));
-
-      // Mock OTP for demo
-      final response = {'otp': '123456', 'message': 'OTP sent to $email'};
+      // Use AuthService to request OTP
+      await AuthService.login(email);
 
       if (mounted) {
         setState(() {
           _isLoading = false;
           _showOtpField = true;
           _email = email;
-          // In a real app, you wouldn't show the OTP in the UI
-          _otpController.text = response['otp']!;
         });
 
-        // Show a snackbar with success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              response['message']!,
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: _zinc900,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            margin: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 16.0,
-            ),
-          ),
-        );
+        UiUtils.showSnackBar(context, 'OTP sent to $email');
       }
     } catch (e) {
       if (mounted) {
+        print(e);
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Failed to send OTP. Please try again.',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: Colors.red[800],
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            margin: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 16.0,
-            ),
-          ),
+        UiUtils.showSnackBar(
+          context,
+          'Failed to send OTP. Please try again.',
+          isError: true,
         );
       }
     }
@@ -105,8 +72,8 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Use AuthService to handle login and session creation
-      await AuthService.login(_email!, otp);
+      // Verify OTP and create session
+      await AuthService.verifyOtp(_email!, otp);
 
       // Check if user has completed profile
       final user = await AuthService.getCurrentUser();
@@ -131,23 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.toString(),
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: Colors.red[800],
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            margin: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 16.0,
-            ),
-          ),
-        );
+        UiUtils.showSnackBar(context, e.toString(), isError: true);
       }
     }
   }

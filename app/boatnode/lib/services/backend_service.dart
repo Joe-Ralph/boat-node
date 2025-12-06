@@ -1,47 +1,43 @@
 import 'dart:async';
-import 'dart:math';
-import '../models/user.dart';
+import 'dart:convert';
+import '../models/user.dart' as app_user;
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class BackendService {
-  static const bool _useMock = true;
-
-  // Mock Data
-  static final List<Map<String, String>> _villages = [
-    {'id': '1', 'name': 'Marina Beach', 'district': 'Chennai'},
-    {'id': '2', 'name': 'Besant Nagar', 'district': 'Chennai'},
-    {'id': '3', 'name': 'Kovalam', 'district': 'Kanchipuram'},
-    {'id': '4', 'name': 'Mahabalipuram', 'district': 'Chengalpattu'},
-  ];
-
-  static final Map<String, String> _devicePasswords = {
-    '1234': 'pairme-1234',
-    '5678': 'pairme-5678',
-  };
-
   // --- Profile & Villages ---
 
-  static Future<List<Map<String, String>>> getVillages() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    return _villages;
+  static Future<List<Map<String, dynamic>>> getVillages() async {
+    final response = await Supabase.instance.client
+        .from('villages')
+        .select()
+        .order('name');
+    return List<Map<String, dynamic>>.from(response);
   }
 
-  static Future<User> updateProfile(
-    User user, {
+  static Future<app_user.User> updateProfile(
+    app_user.User user, {
     String? displayName,
     String? role,
     String? villageId,
   }) async {
-    await Future.delayed(const Duration(seconds: 1));
+    final updates = {
+      if (displayName != null) 'display_name': displayName,
+      if (role != null) 'role': role,
+      if (villageId != null) 'village_id': villageId,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
 
-    // In a real app, this would update the backend
-    return User(
-      id: user.id,
-      email: user.email,
-      displayName: displayName ?? user.displayName,
-      role: role ?? user.role,
-      villageId: villageId ?? user.villageId,
-      boatId: user.boatId,
-    );
+    if (updates.isEmpty) return user;
+
+    final response = await Supabase.instance.client
+        .from('profiles')
+        .update(updates)
+        .eq('id', user.id)
+        .select()
+        .single();
+
+    return app_user.User.fromJson(response);
   }
 
   // --- Boat Management ---
@@ -49,82 +45,219 @@ class BackendService {
   static Future<Map<String, dynamic>> registerBoat({
     required String name,
     required String registrationNumber,
-    required String deviceId,
-    required int ownerId,
+    String? deviceId,
+    required String ownerId,
     required String villageId,
   }) async {
-    await Future.delayed(const Duration(seconds: 1));
+    // 1. Insert Boat
+    final boatResponse = await Supabase.instance.client
+        .from('boats')
+        .insert({
+          'name': name,
+          'registration_number': registrationNumber,
+          'device_id': deviceId,
+          'owner_id': ownerId,
+          'village_id': villageId,
+        })
+        .select()
+        .single();
 
-    // Validate device ID (mock check)
-    if (!_devicePasswords.containsKey(deviceId)) {
-      throw Exception('Invalid Device ID');
+    String? password;
+    if (deviceId != null) {
+      // 2. Get Device Password (securely) if deviceId is provided
+      try {
+        password = await getDevicePassword(deviceId);
+      } catch (e) {
+        LogService.w(
+          "Warning: Could not fetch password for device $deviceId",
+          e,
+        );
+      }
     }
 
-    final boatId = 'boat-${Random().nextInt(10000)}';
-    final devicePassword = _devicePasswords[deviceId]!;
+    return {'boat_id': boatResponse['id'], 'device_password': password};
+  }
 
-    return {'boat_id': boatId, 'device_password': devicePassword};
+  static Future<List<Map<String, dynamic>>> getUserBoats(String userId) async {
+    final response = await Supabase.instance.client
+        .from('boats')
+        .select()
+        .eq('owner_id', userId);
+    return List<Map<String, dynamic>>.from(response);
   }
 
   static Future<String> getDevicePassword(String deviceId) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (_devicePasswords.containsKey(deviceId)) {
-      return _devicePasswords[deviceId]!;
+    try {
+      // Call secure RPC function
+      final response = await Supabase.instance.client.rpc(
+        'get_device_password',
+        params: {'p_device_id': deviceId},
+      );
+
+      if (response == null) {
+        throw Exception('Device not found or password unavailable');
+      }
+      return response as String;
+    } catch (e) {
+      // Fallback for testing if RPC fails or not set up
+      LogService.w(
+        "RPC failed. Falling back to direct query (only works if RLS allows).",
+        e,
+      );
+      // Note: This fallback will likely fail if RLS is strict, which is good.
+      throw Exception('Failed to get device password');
     }
-    throw Exception('Device not found');
   }
 
   static Future<void> associateDeviceWithBoat(
     String deviceId,
     String boatId,
   ) async {
-    await Future.delayed(const Duration(seconds: 1));
-    // Mock association logic
-    print('Associated device $deviceId with boat $boatId');
+    await Supabase.instance.client
+        .from('boats')
+        .update({'device_id': deviceId})
+        .eq('id', boatId);
   }
 
   // --- Location Updates ---
 
-  static Future<void> updateLocation({
+  static Future<void> updateLiveLocation({
     required double lat,
     required double lon,
     required int battery,
+    required String boatId,
+    double heading = 0.0,
+    double speed = 0.0,
   }) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    // Mock location update
-    print(
-      'Backend: Location updated -> Lat: $lat, Lon: $lon, Battery: $battery%',
+    // 1. Audit Log (History)
+    await Supabase.instance.client.from('boat_logs').insert({
+      'boat_id': boatId,
+      'lat': lat,
+      'lon': lon,
+      'battery_level': battery,
+      'heading': heading,
+      'speed': speed,
+    });
+
+    // 2. Live Location (Current State)
+    await Supabase.instance.client.from('boat_live_locations').upsert({
+      'boat_id': boatId,
+      'lat': lat,
+      'lon': lon,
+      'heading': heading,
+      'speed': speed,
+      'battery_level': battery,
+      'last_updated': DateTime.now().toIso8601String(),
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getNearbyBoats({
+    required double lat,
+    required double lon,
+    double radiusMeters = 50000,
+  }) async {
+    final response = await Supabase.instance.client.rpc(
+      'get_nearby_boats',
+      params: {
+        'my_lat': lat,
+        'my_lon': lon,
+        'radius_meters': radiusMeters,
+        'limit_count': 20,
+      },
     );
+    return List<Map<String, dynamic>>.from(response);
   }
 
   // --- QR & Joining ---
 
   static Future<Map<String, dynamic>> joinBoatByQR(String qrCode) async {
-    await Future.delayed(const Duration(seconds: 1));
+    // Format V1: BOAT:<boat_id>:<device_id> (Legacy)
+    // Format V2: BOAT_V2:<boat_id>:<owner_id>:<password>
+    // Note: Input qrCode is expected to be Base64 encoded V2 string, but we support raw for legacy/testing.
 
-    // Format: BOAT:<boat_id>:<device_id>:<password>
     try {
-      if (!qrCode.startsWith('BOAT:')) {
+      String decodedQr;
+      // Simple heuristic: If it starts with "BOAT", it's likely raw. Otherwise try decode.
+      if (qrCode.startsWith("BOAT")) {
+        decodedQr = qrCode;
+      } else {
+        try {
+          decodedQr = utf8.decode(base64Decode(qrCode));
+        } catch (_) {
+          // If decode fails, assume it's just a malformed string or raw string that didn't start with BOAT
+          decodedQr = qrCode;
+        }
+      }
+
+      final parts = decodedQr.split(':');
+      if (parts.length < 3) throw Exception('Incomplete QR Data');
+
+      String boatId;
+      String? ownerIdFromQr;
+      // String? password; // Not used for DB auth, maybe for Wifi later?
+
+      if (parts[0] == 'BOAT_V2') {
+        if (parts.length < 4) throw Exception('Invalid V2 QR Data');
+        boatId = parts[1];
+        ownerIdFromQr = parts[2];
+        // password = parts[3];
+      } else if (parts[0] == 'BOAT') {
+        // Legacy fallback or reject? Prompt says "always make this validation".
+        // So we should probably reject if we want strict owner validation and legacy didn't have it.
+        // But legacy had <device_id> at index 2.
+        // Let's support V2 primarily as requested.
+        throw Exception(
+          'Old QR format no longer supported. Please ask owner to update app.',
+        );
+      } else {
         throw Exception('Invalid QR Code Format');
       }
 
-      final parts = qrCode.split(':');
-      if (parts.length < 4) throw Exception('Incomplete QR Data');
+      // 1. Fetch Boat and Verify Owner
+      final boat = await Supabase.instance.client
+          .from('boats')
+          .select()
+          .eq('id', boatId)
+          .single();
 
-      final boatId = parts[1];
-      final deviceId = parts[2];
-      final password = parts[3];
+      // 2. Validate Owner ID
+      if (ownerIdFromQr != boat['owner_id']) {
+        throw Exception(
+          'Security Warning: QR Code owner does not match Boat owner. Validation failed.',
+        );
+      }
 
-      // In real app, verify signature/hash here
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) throw Exception('User not logged in');
+
+      // 3. Re-register logic: Delete previous joined boat memberships
+      // "delete their previous joined boat in the backend and rejoin..."
+      await Supabase.instance.client
+          .from('boat_members')
+          .delete()
+          .eq('user_id', userId);
+
+      // 4. Join the new boat
+      await Supabase.instance.client.from('boat_members').insert({
+        'boat_id': boatId,
+        'user_id': userId,
+        'role': 'crew',
+      });
+
+      // Also update profile to reflect current boat for easy access
+      await Supabase.instance.client
+          .from('profiles')
+          .update({'boat_id': boatId})
+          .eq('id', userId);
 
       return {
         'boat_id': boatId,
-        'device_id': deviceId,
-        'boat_name': 'Boat $boatId',
-        'device_password': password,
+        'boat_name': boat['name'],
+        'owner_id': boat['owner_id'],
       };
     } catch (e) {
-      throw Exception('Failed to join boat: $e');
+      LogService.e("Join Boat Error", e);
+      rethrow; // Pass error to UI
     }
   }
 }

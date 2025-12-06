@@ -9,6 +9,8 @@ import 'package:boatnode/theme/app_theme.dart';
 import 'package:boatnode/services/geofence_service.dart';
 import 'package:boatnode/services/map_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:boatnode/services/backend_service.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class CachedTileProvider extends TileProvider {
   @override
@@ -65,11 +67,41 @@ class _NearbyScreenState extends State<NearbyScreen> {
     }
 
     // Fallback or if unpaired: use phone location
-    if (position == null) {
-      position = await HardwareService.getCurrentLocation();
-    }
+    position ??= await HardwareService.getCurrentLocation();
 
-    final boats = await HardwareService.scanMesh();
+    // Fetch boats based on mode
+    List<NearbyBoat> boats = [];
+    if (SessionService.isPaired) {
+      // Mesh Scan (Paired)
+      boats = await HardwareService.scanMesh();
+    } else if (position != null) {
+      // Backend Query (Unpaired) - Find boats near me
+      try {
+        final backendBoats = await BackendService.getNearbyBoats(
+          lat: position.latitude,
+          lon: position.longitude,
+        );
+        // Convert Map to NearbyBoat model
+        boats = backendBoats.map((data) {
+          return NearbyBoat(
+            id: (data['boat_id'] as String?) ?? 'unknown',
+            name: (data['boat_name'] as String?) ?? 'Unknown Boat',
+            lat: (data['lat'] as num).toDouble(),
+            lon: (data['lon'] as num).toDouble(),
+            distance: (data['distance_meters'] as num).toInt(),
+            lastSeen: _calculateMinutesAgo(data['last_updated']),
+            battery: data['battery_level'] ?? 0,
+            userId:
+                0, // Backend uses UUIDs, legacy model uses int. Defaulting to 0.
+            bearing:
+                "N", // Placeholder, calculation logic is internal to model or not needed for basic list
+          );
+        }).toList();
+      } catch (e) {
+        LogService.e("NearbyScreen: Error fetching nearby boats", e);
+        // Fallback or empty list
+      }
+    }
 
     if (mounted) {
       setState(() {
@@ -99,6 +131,16 @@ class _NearbyScreenState extends State<NearbyScreen> {
           }
         });
       }
+    }
+  }
+
+  int _calculateMinutesAgo(String? isoString) {
+    if (isoString == null) return 0;
+    try {
+      final time = DateTime.parse(isoString);
+      return DateTime.now().difference(time).inMinutes;
+    } catch (_) {
+      return 0;
     }
   }
 

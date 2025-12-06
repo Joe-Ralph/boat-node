@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:boatnode/services/session_service.dart';
-import 'package:boatnode/models/session.dart';
+import 'package:boatnode/models/session.dart' as app_session;
 import 'package:boatnode/models/user.dart' as app_user;
 import 'package:boatnode/services/backend_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class AuthService {
   // Mock method to validate session with a server
@@ -20,32 +22,46 @@ class AuthService {
     return true;
   }
 
-  // Mock login that returns a session
-  static Future<Session> login(String email, String otp) async {
-    // In a real app, this would make an API call to verify the OTP
-    await Future.delayed(const Duration(seconds: 1));
+  // Login with Email OTP
+  static Future<void> login(String email) async {
+    await Supabase.instance.client.auth.signInWithOtp(email: email);
+  }
 
-    // For demo purposes, we'll accept any OTP that's 6 digits
-    if (otp.length != 6) {
-      throw Exception('Invalid OTP');
+  // Verify OTP and create session
+  static Future<app_session.Session> verifyOtp(String email, String otp) async {
+    final response = await Supabase.instance.client.auth.verifyOTP(
+      type: OtpType.email,
+      token: otp,
+      email: email,
+    );
+
+    if (response.session == null) {
+      throw Exception('Login failed: No session created');
     }
 
-    // Create a new session that expires in 7 days
-    final session = Session(
-      token: 'mock_jwt_${DateTime.now().millisecondsSinceEpoch}',
-      userId: 'user_${email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')}',
-      displayName: email.split('@')[0],
-      expiresAt: DateTime.now().add(const Duration(days: 7)),
+    final sbSession = response.session!;
+    final sbUser = response.user!;
+
+    // Create a local session object
+    final session = app_session.Session(
+      token: sbSession.accessToken,
+      userId: sbUser.id,
+      displayName: sbUser.userMetadata?['display_name'] ?? email.split('@')[0],
+      expiresAt: DateTime.now().add(
+        Duration(seconds: sbSession.expiresIn ?? 3600),
+      ),
     );
 
-    // Initialize mock user for this session (Fresh login -> No role)
-    final user = app_user.User(
-      id: "101", // Mock String ID
-      displayName: session.displayName,
-      email: email,
-      role: null, // Force null role to trigger profile screen
-      villageId: null,
-    );
+    // Fetch or Create User Profile
+    app_user.User? user = await _fetchUserProfile(sbUser.id);
+
+    user ??= app_user.User(
+        id: sbUser.id,
+        displayName: session.displayName,
+        email: email,
+        role: null,
+        villageId: null,
+      );
 
     await SessionService.saveSession(session);
     await SessionService.saveUser(user);
@@ -54,6 +70,7 @@ class AuthService {
   }
 
   static Future<void> logout() async {
+    await Supabase.instance.client.auth.signOut();
     await SessionService.clearSession();
   }
 
@@ -62,13 +79,62 @@ class AuthService {
     String? displayName,
     String? role,
     String? villageId,
+    String? boatRegistrationNumber,
   }) async {
-    final updatedUser = await BackendService.updateProfile(
+    // Update Supabase Auth Metadata (optional, but good for quick access)
+    await Supabase.instance.client.auth.updateUser(
+      UserAttributes(
+        data: {if (displayName != null) 'display_name': displayName},
+      ),
+    );
+
+    // Update Profiles Table via BackendService
+    var updatedUser = await BackendService.updateProfile(
       user,
       displayName: displayName,
       role: role,
       villageId: villageId,
     );
+
+    // If role is owner and registration number is provided, register the boat
+    if (role == 'owner' &&
+        boatRegistrationNumber != null &&
+        boatRegistrationNumber.isNotEmpty) {
+      try {
+        final result = await BackendService.registerBoat(
+          name: "${updatedUser.displayName}'s Boat",
+          registrationNumber: boatRegistrationNumber,
+          ownerId: updatedUser.id,
+          villageId: villageId ?? updatedUser.villageId ?? '',
+        );
+
+        final boatId = result['boat_id'] as String;
+
+        // Update local user object with boatId
+        // Note: We might need to update the profile with boat_id if the backend doesn't do it automatically
+        // But typically the boat table has owner_id, so we can query it.
+        // However, the User model has boatId, so let's update it locally and persist.
+
+        // Also update profile with current active boat_id
+        await Supabase.instance.client
+            .from('profiles')
+            .update({'boat_id': boatId})
+            .eq('id', updatedUser.id);
+
+        updatedUser = app_user.User(
+          id: updatedUser.id,
+          displayName: updatedUser.displayName,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          villageId: updatedUser.villageId,
+          boatId: boatId,
+        );
+      } catch (e) {
+        LogService.e("Error registering boat", e);
+        // We might want to rethrow or handle this gracefully
+        // For now, we proceed but log the error
+      }
+    }
 
     // Update local mock user
     await SessionService.saveUser(updatedUser);
@@ -78,35 +144,43 @@ class AuthService {
 
   static Future<void> joinBoat(String qrCode) async {
     final result = await BackendService.joinBoatByQR(qrCode);
-    // In a real app, we would update the user's session/profile on the server
-    // and refresh the local user object.
-    // For mock, we assume the backend update happened.
-    print("Joined boat: ${result['boat_name']}");
+    LogService.i("Joined boat: ${result['boat_name']}");
   }
 
   static Future<app_user.User?> getCurrentUser() async {
-    await Future.delayed(const Duration(milliseconds: 500));
+    // Check Supabase Session
+    final sbUser = Supabase.instance.client.auth.currentUser;
+    if (sbUser == null) {
+      return null;
+    }
 
-    // Return persisted user from SessionService
-    if (SessionService.currentUser != null) {
+    // Try to get from local storage first for speed
+    if (SessionService.currentUser != null &&
+        SessionService.currentUser!.id == sbUser.id) {
+      // Optionally verify if session is expired? Supabase SDK handles token refresh.
       return SessionService.currentUser;
     }
 
-    // Fallback if session exists but user not found (shouldn't happen with new logic)
-    final session = SessionService.currentSession;
-    if (session != null) {
-      final user = app_user.User(
-        id: "101",
-        displayName: session.displayName,
-        email: "user@example.com", // Fallback email
-        role: null,
-        villageId: null,
-      );
-      // Save this fallback so we don't create it again
+    // Fetch from Backend
+    final user = await _fetchUserProfile(sbUser.id);
+    if (user != null) {
       await SessionService.saveUser(user);
-      return user;
     }
+    return user;
+  }
 
-    return null;
+  static Future<app_user.User?> _fetchUserProfile(String userId) async {
+    try {
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      return app_user.User.fromJson(data);
+    } catch (e) {
+      LogService.e('Error fetching profile', e);
+      return null;
+    }
   }
 }

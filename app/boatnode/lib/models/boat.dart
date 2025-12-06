@@ -5,6 +5,8 @@ class Boat {
   final Map<String, dynamic> connection;
   final Map<String, dynamic> lastFix;
 
+  final String?
+  ownerId; // Nullable if not always fetched or for backward compatibility
   final String gpsStatus;
 
   Boat({
@@ -13,6 +15,7 @@ class Boat {
     required this.batteryLevel,
     required this.connection,
     required this.lastFix,
+    this.ownerId,
     this.gpsStatus = "UNKNOWN",
   });
 }

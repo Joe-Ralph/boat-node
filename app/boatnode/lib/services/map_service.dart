@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class MapService {
   static final ValueNotifier<double> cachingProgress = ValueNotifier(0.0);
@@ -14,11 +15,11 @@ class MapService {
     // Check for internet connection first
     bool hasInternet = await InternetConnectionChecker().hasConnection;
     if (!hasInternet) {
-      print("No internet connection. Skipping map caching.");
+      LogService.w("No internet connection. Skipping map caching.");
       return;
     }
 
-    print("Starting background map caching for location: $lat, $lon");
+    LogService.i("Starting background map caching for location: $lat, $lon");
 
     final List<String> urls = [];
 
@@ -32,7 +33,7 @@ class MapService {
     // Tier 3: Immediate Area (10km) - High Zoom (15-16)
     await _cacheZoomLevels(context, lat, lon, 10.0, [15, 16], urls);
 
-    print("Queued ${urls.length} tiles for caching...");
+    LogService.i("Queued ${urls.length} tiles for caching...");
 
     // 2. Download tiles in background
     // We don't await this fully in the UI thread to avoid blocking,
@@ -56,7 +57,7 @@ class MapService {
             }
           } catch (e) {
             // Ignore errors for individual tiles
-            // print("Failed to cache $url: $e");
+            // LogService.e("Failed to cache $url", e);
           }
         }),
       );
@@ -70,7 +71,7 @@ class MapService {
     }
     cachingProgress.value = 1.0; // Ensure complete
 
-    print(
+    LogService.i(
       "Map caching completed. Cached $successCount / ${urls.length} tiles.",
     );
   }

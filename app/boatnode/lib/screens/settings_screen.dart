@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:boatnode/main.dart';
 import 'package:boatnode/l10n/app_localizations.dart';
 import 'package:boatnode/services/auth_service.dart';
+import '../utils/ui_utils.dart';
 import 'package:boatnode/services/session_service.dart';
 import 'package:boatnode/services/hardware_service.dart';
 import 'package:flutter/foundation.dart';
@@ -63,20 +64,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     bool isError = false,
     bool isSuccess = false,
   }) {
-    if (!mounted) return;
-
-    Color backgroundColor = kZinc900; // Default theme color
-    if (isSuccess) backgroundColor = kGreen500;
-    if (isError) backgroundColor = kRed600;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
-        backgroundColor: backgroundColor,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-        margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-      ),
+    UiUtils.showSnackBar(
+      context,
+      message,
+      isError: isError,
+      isSuccess: isSuccess,
     );
   }
 
@@ -125,141 +117,157 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
+        // leading: Removed to allow system back button handling
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
       ),
       body: Container(
         color: Colors.black,
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              context.translate('language').toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14.0,
-                fontWeight: FontWeight.bold,
+        height: double.infinity,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                context.translate('language').toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14.0,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Consumer<LocaleProvider>(
-              builder: (context, localeProvider, _) {
-                return _buildLanguageGrid(localeProvider.locale);
-              },
-            ),
-            const SizedBox(height: 24),
-            _buildUserInfoTile(),
-            const SizedBox(height: 24),
-            _buildStatusIntervalSlider(),
-            const SizedBox(height: 24),
-            _buildGpsIntervalSlider(),
-            const SizedBox(height: 24),
-            if (_user != null) ...[
-              if (_user!.role == 'owner' && SessionService.isPaired)
-                _buildSettingsButton(
-                  icon: Icons.qr_code,
-                  label: "Show QR Code",
-                  onTap: () {
-                    // We need a Boat object here. For now, mock one or fetch it.
-                    // Assuming HardwareService.getBoatStatus returns current boat
-                    HardwareService.getBoatStatus('123').then((boat) {
-                      if (boat != null && mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => QRCodeScreen(boat: boat),
-                          ),
-                        );
-                      } else {
-                        _showSnackBar("Boat data not available", isError: true);
+              const SizedBox(height: 16),
+              Consumer<LocaleProvider>(
+                builder: (context, localeProvider, _) {
+                  return _buildLanguageGrid(localeProvider.locale);
+                },
+              ),
+              const SizedBox(height: 24),
+              _buildUserInfoTile(),
+              const SizedBox(height: 24),
+              _buildStatusIntervalSlider(),
+              const SizedBox(height: 24),
+              _buildGpsIntervalSlider(),
+              const SizedBox(height: 24),
+              if (_user != null) ...[
+                if (_user!.role == 'owner' && SessionService.isPaired)
+                  _buildSettingsButton(
+                    icon: Icons.qr_code,
+                    label: "Show QR Code",
+                    onTap: () {
+                      final boatId =
+                          SessionService.pairedBoatId ?? _user?.boatId;
+
+                      if (boatId == null) {
+                        _showSnackBar("No boat ID found", isError: true);
+                        return;
                       }
-                    });
-                  },
-                ),
-              const SizedBox(height: 12),
-              // Only show Scan QR for non-owners
-              if (_user!.role != 'owner')
-                _buildSettingsButton(
-                  icon: Icons.qr_code_scanner,
-                  label: "Scan QR Code",
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const QRScanScreen()),
-                    );
-                  },
-                ),
-              const SizedBox(height: 24),
-            ],
-            if (SessionService.isPaired)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _unpairDevice,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFDC2626), // Red 600
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+
+                      // Fetch actual status
+                      HardwareService.getBoatStatus(boatId)
+                          .then((boat) {
+                            if (mounted) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => QRCodeScreen(boat: boat),
+                                ),
+                              );
+                            }
+                          })
+                          .catchError((e) {
+                            if (mounted) {
+                              _showSnackBar(
+                                "Failed to load boat data: $e",
+                                isError: true,
+                              );
+                            }
+                          });
+                    },
+                  ),
+                const SizedBox(height: 12),
+                // Show Scan QR for non-owners (Joiners/Land Users)
+                // They might need to scan to join a new boat or re-join
+                if (_user!.role != 'owner')
+                  _buildSettingsButton(
+                    icon: Icons.qr_code_scanner,
+                    label: "Scan QR Code",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const QRScanScreen()),
+                      );
+                    },
+                  ),
+                const SizedBox(height: 24),
+              ],
+              if (SessionService.isPaired)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _unpairDevice,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFDC2626), // Red 600
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Unpair Device',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  child: const Text(
-                    'Unpair Device',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                ),
+              if (kDebugMode) ...[
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const DebugScreen()),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kZinc800,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      context.translate('debugMenu'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            if (kDebugMode) ...[
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const DebugScreen()),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kZinc800,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
+              ],
+              const SizedBox(height: 48), // Replaced Spacer with fixed spacing
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
                   child: Text(
-                    context.translate('debugMenu'),
+                    context.translate('version'),
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                      color: Colors.white38,
+                      fontSize: 12.0,
                     ),
                   ),
                 ),
               ),
             ],
-            const Spacer(), // Pushes the following widget to the bottom
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Text(
-                  context.translate('version'),
-                  style: const TextStyle(color: Colors.white38, fontSize: 12.0),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -328,9 +336,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildUserInfoTile() {
-    final session = SessionService.currentSession;
-    final displayName = session?.displayName ?? 'Guest User';
-    final userId = session?.userId ?? 'Not Logged In';
+    // Use _user (loaded from profile) if available, otherwise fallback to session
+    final displayName =
+        _user?.displayName ??
+        SessionService.currentSession?.displayName ??
+        'Guest User';
+    final id =
+        _user?.email ??
+        SessionService.currentSession?.userId ??
+        'Not Logged In';
 
     return Container(
       decoration: BoxDecoration(
@@ -357,7 +371,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 4.0),
               Text(
-                userId,
+                id,
                 style: const TextStyle(color: Colors.white70, fontSize: 14.0),
               ),
             ],
@@ -413,14 +427,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            context.translate('statusUpdateInterval'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 16.0,
+          Expanded(
+            child: Text(
+              context.translate('statusUpdateInterval'),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 16.0,
+              ),
             ),
           ),
+          const SizedBox(width: 16),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
@@ -480,14 +497,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            context.translate('gpsUpdateInterval'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 16.0,
+          Expanded(
+            child: Text(
+              context.translate('gpsUpdateInterval'),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 16.0,
+              ),
             ),
           ),
+          const SizedBox(width: 16),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(

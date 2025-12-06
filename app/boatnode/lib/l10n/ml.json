@@ -1,5 +1,7 @@
 {
   "appTitle": "നെടുവായ്",
+  "startJourney": "യാത്ര ആരംഭിക്കുക",
+  "endJourney": "യാത്ര അവസാനിപ്പിക്കുക",
   "settings": "ക്രമീകരണങ്ങൾ",
   "language": "ഭാഷ",
   "english": "ഇംഗ്ലീഷ്",
@@ -66,5 +68,7 @@
   "debugMenu": "ഡീബഗ് മെനു",
   "triggerNotification": "ബാറ്ററി നോട്ടിഫിക്കേഷൻ ട്രിഗർ ചെയ്യുക",
   "pairDeviceButton": "ഉപകരണം പെയർ ചെയ്യുക",
-  "connectDevice": "ഉപകരണവുമായി ബന്ധിപ്പിക്കുക"
+  "connectDevice": "ഉപകരണവുമായി ബന്ധിപ്പിക്കുക",
+  "statusUpdateInterval": "സ്റ്റാറ്റസ് അപ്‌ഡേറ്റ് ഇടവേള",
+  "gpsUpdateInterval": "ജിപിഎസ് അപ്‌ഡേറ്റ് ഇടവേള"
 }

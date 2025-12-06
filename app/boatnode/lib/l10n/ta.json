@@ -1,5 +1,9 @@
 {
+  "enableLocation": "இடத்தை இயலச்செய்",
   "appTitle": "நெடுவாய்",
+  "seconds": "விநாடிகள்",
+  "startJourney": "பயணத்தைத் தொடங்கு",
+  "endJourney": "பயணத்தை முடி",
   "settings": "அமைப்புகள்",
   "language": "மொழி",
   "english": "ஆங்கிலம்",
@@ -66,5 +70,7 @@
   "debugMenu": "பிழைத்திருத்த மெனு",
   "triggerNotification": "குறைந்த பேட்டரி அறிவிப்பைத் தூண்டவும்",
   "pairDeviceButton": "சாதனத்தை இணைக்க",
-  "connectDevice": "சாதனத்துடன் இணைக்கவும்"
+  "connectDevice": "சாதனத்துடன் இணைக்கவும்",
+  "statusUpdateInterval": "நிலை புதுப்பிப்பு இடைவெளி",
+  "gpsUpdateInterval": "GPS புதுப்பிப்பு இடைவெளி"
 }

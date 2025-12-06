@@ -1,5 +1,8 @@
 {
   "appTitle": "नेडुवाय",
+  "seconds": "सेकंड",
+  "startJourney": "यात्रा शुरू करें",
+  "endJourney": "यात्रा समाप्त करें",
   "settings": "सेटिंग्स",
   "language": "भाषा",
   "english": "अंग्रेज़ी",
@@ -66,5 +69,7 @@
   "debugMenu": "डीबग मेनू",
   "triggerNotification": "कम बैटरी अधिसूचना ट्रिगर करें",
   "pairDeviceButton": "डिवाइस पेयर करें",
-  "connectDevice": "डिवाइस से कनेक्ट करें"
+  "connectDevice": "डिवाइस से कनेक्ट करें",
+  "statusUpdateInterval": "स्थिति अपडेट अंतराल",
+  "gpsUpdateInterval": "जीपीएस अपडेट अंतराल"
 }

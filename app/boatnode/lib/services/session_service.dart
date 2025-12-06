@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/session.dart';
 import '../models/user.dart';
+import 'package:boatnode/services/log_service.dart';
 
 class SessionService {
   static const String _sessionKey = 'user_session';
@@ -10,6 +11,8 @@ class SessionService {
   static const String _boatIdKey = 'paired_boat_id';
   static bool _isPaired = false;
   static String? _pairedBoatId;
+  static const String _journeyKey = 'is_journey_active';
+  static bool _journeyActive = false;
 
   static Future<void> init() async {
     await _loadSession();
@@ -17,6 +20,7 @@ class SessionService {
     await _loadPairingState();
     await _loadStatusInterval();
     await _loadGpsUpdateInterval();
+    await _loadJourneyState();
   }
 
   static const String _statusIntervalKey = 'status_interval';
@@ -54,22 +58,22 @@ class SessionService {
     final prefs = await SharedPreferences.getInstance();
     final sessionJson = prefs.getString(_sessionKey);
 
-    print('SessionService: Loading session from prefs: $sessionJson');
+    LogService.d('SessionService: Loading session from prefs: $sessionJson');
 
     if (sessionJson != null) {
       try {
         final Map<String, dynamic> sessionMap = jsonDecode(sessionJson);
         _currentSession = Session.fromJson(sessionMap);
-        print(
+        LogService.i(
           'SessionService: Session loaded successfully. Token: ${_currentSession?.token}',
         );
       } catch (e) {
-        print('SessionService: Error loading session: $e');
-        print('SessionService: Clearing invalid session data.');
+        LogService.e('SessionService: Error loading session', e);
+        LogService.w('SessionService: Clearing invalid session data.');
         await clearSession();
       }
     } else {
-      print('SessionService: No session found in prefs.');
+      LogService.i('SessionService: No session found in prefs.');
     }
   }
 
@@ -83,9 +87,11 @@ class SessionService {
     if (userJson != null) {
       try {
         _currentUser = User.fromJson(jsonDecode(userJson));
-        print('SessionService: User loaded: ${_currentUser?.displayName}');
+        LogService.i(
+          'SessionService: User loaded: ${_currentUser?.displayName}',
+        );
       } catch (e) {
-        print('SessionService: Error loading user: $e');
+        LogService.e('SessionService: Error loading user', e);
       }
     }
   }
@@ -134,6 +140,21 @@ class SessionService {
 
   static bool get isPaired => _isPaired;
   static String? get pairedBoatId => _pairedBoatId;
+
+  // --- Journey Mode ---
+
+  static Future<void> _loadJourneyState() async {
+    final prefs = await SharedPreferences.getInstance();
+    _journeyActive = prefs.getBool(_journeyKey) ?? false;
+  }
+
+  static Future<void> saveJourneyState(bool isActive) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_journeyKey, isActive);
+    _journeyActive = isActive;
+  }
+
+  static bool get isJourneyActive => _journeyActive;
 
   static Future<void> saveSession(Session session) async {
     final prefs = await SharedPreferences.getInstance();

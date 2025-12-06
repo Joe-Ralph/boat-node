@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter/material.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:wifi_iot/wifi_iot.dart';
 import 'package:wifi_scan/wifi_scan.dart';
@@ -8,6 +8,9 @@ import 'package:geolocator/geolocator.dart';
 import '../models/boat.dart';
 import '../models/nearby_boat.dart';
 import 'dart:async';
+import 'package:boatnode/services/log_service.dart';
+import 'package:boatnode/services/auth_service.dart';
+import 'package:boatnode/utils/boat_utils.dart';
 
 class HardwareService {
   static bool _useMockService = true; // Default to true for development
@@ -60,9 +63,18 @@ class HardwareService {
     try {
       return await InternetConnectionChecker().hasConnection;
     } catch (e) {
-      print("Error checking internet connection: $e");
+      LogService.e("Error checking internet connection", e);
       return false;
     }
+  }
+
+  static Future<int> getBatteryLevel() async {
+    if (_useMockService) {
+      return _mockBatteryLevel;
+    }
+    // TODO: Implement real battery level check using battery_plus package
+    // For now, return a default value or mock
+    return 100;
   }
 
   static Future<Position?> getCurrentLocation() async {
@@ -118,9 +130,13 @@ class HardwareService {
 
     if (_useMockService) {
       await Future.delayed(const Duration(milliseconds: 800));
+      // Fetch current user for dynamic naming
+      final user = await AuthService.getCurrentUser();
+      final boatName = BoatUtils.getDynamicBoatName(user?.displayName);
+
       return Boat(
         id: id,
-        name: "Raja's Boat",
+        name: boatName,
         batteryLevel: _mockBatteryLevel,
         connection: {'wifi': true, 'lora': false, 'mesh': 3},
         lastFix: _mockPosition != null
@@ -145,7 +161,7 @@ class HardwareService {
           );
         }
       } catch (e) {
-        print("Error getting boat status: $e");
+        LogService.e("Error getting boat status", e);
       }
       // Return a default/error boat if failed
       return Boat(
@@ -216,7 +232,7 @@ class HardwareService {
               .toList();
         }
       } catch (e) {
-        print("Error scanning mesh: $e");
+        LogService.e("Error scanning mesh", e);
       }
       return [];
     }
@@ -277,7 +293,7 @@ class HardwareService {
             e.toString().contains("WiFi is disabled")) {
           rethrow;
         }
-        print("Error scanning for devices: $e");
+        LogService.e("Error scanning for devices", e);
         return [];
       }
     }
@@ -286,7 +302,7 @@ class HardwareService {
   static Future<void> connectToDeviceWifi(String password) async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 2));
-      debugPrint("Connected to device WiFi with password: $password");
+      LogService.d("Connected to device WiFi with password: $password");
     } else {
       try {
         // We need to find the SSID again or pass it.
@@ -320,14 +336,14 @@ class HardwareService {
           // Force traffic to go through WiFi since it has no internet
           await WiFiForIoTPlugin.forceWifiUsage(true);
 
-          print("Connected to ${targetNetwork.ssid}");
+          LogService.i("Connected to ${targetNetwork.ssid}");
           // Wait a bit for connection to stabilize
           await Future.delayed(const Duration(seconds: 3));
         } else {
-          print("Target network not found for connection");
+          LogService.w("Target network not found for connection");
         }
       } catch (e) {
-        print("Error connecting to WiFi: $e");
+        LogService.e("Error connecting to WiFi", e);
       }
     }
   }
@@ -340,7 +356,7 @@ class HardwareService {
   }) async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 1));
-      print(
+      LogService.i(
         "Pairing request sent: boat_id=$boatId, user_id=$userId, name=$displayName, device_id=$deviceId",
       );
       return true;
@@ -391,7 +407,7 @@ class HardwareService {
         }
         return false;
       } catch (e) {
-        print("Error pairing device: $e");
+        LogService.e("Error pairing device", e);
         return false;
       }
     }
@@ -399,13 +415,13 @@ class HardwareService {
 
   static Future<void> notifyPairingSuccess() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    print("Notified device of pairing success");
+    LogService.i("Notified device of pairing success");
   }
 
   static Future<void> unpairDevice() async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 1));
-      print("Device reset request sent");
+      LogService.i("Device reset request sent");
     } else {
       try {
         final response = await http
@@ -416,12 +432,12 @@ class HardwareService {
 
         // Explicitly disconnect from the Boat WiFi
         await WiFiForIoTPlugin.disconnect();
-        print("Disconnected from Boat WiFi");
+        LogService.i("Disconnected from Boat WiFi");
       } catch (e) {
         // Even if request fails, we should probably reset wifi usage if we are done
         await WiFiForIoTPlugin.forceWifiUsage(false);
         await WiFiForIoTPlugin.disconnect();
-        print("Error unpairing device: $e");
+        LogService.e("Error unpairing device", e);
       }
     }
   }

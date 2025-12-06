@@ -9,7 +9,9 @@ import 'package:boatnode/theme/app_theme.dart';
 import 'package:boatnode/l10n/app_localizations.dart';
 import 'package:boatnode/services/session_service.dart';
 import 'package:boatnode/services/notification_service.dart';
+import 'package:boatnode/services/backend_service.dart'; // Added for GPS sync
 import 'package:boatnode/services/map_service.dart';
+import 'package:boatnode/services/log_service.dart';
 import 'package:boatnode/services/geofence_service.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +21,11 @@ import 'package:boatnode/models/user.dart';
 import 'package:boatnode/screens/qr_scan_screen.dart';
 import 'package:boatnode/screens/qr_code_screen.dart';
 import 'package:geolocator/geolocator.dart';
+
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../utils/ui_utils.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -35,6 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Position? _currentPosition;
   bool _isNearBorder = false;
   bool _isConnecting = false;
+  bool _isProcessingJourney = false;
 
   User? _user;
 
@@ -70,13 +78,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _loadData();
-    _checkInternet();
-  }
-
   Future<void> _checkInternet() async {
     final hasInternet = await InternetConnectionChecker().hasConnection;
     if (mounted) {
@@ -91,9 +92,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) {
       setState(() {
         _user = user;
+
+        // New Logic: If Owner and no Boat ID known, fetch from backend and persist
+        if (user != null && user.role == 'owner' && user.boatId == null) {
+          BackendService.getUserBoats(user.id)
+              .then((boats) async {
+                if (boats.isNotEmpty) {
+                  final boatId = boats.first['id'].toString();
+                  // Update local user object
+                  final updatedUser = user.copyWith(boatId: boatId);
+                  setState(
+                    () => _user = updatedUser,
+                  ); // Update state with new user
+                  // Persist updated user
+                  await SessionService.saveUser(updatedUser);
+                  LogService.i(
+                    "Dashboard: Fetched and persisted Boat ID: $boatId",
+                  );
+                }
+              })
+              .catchError((e) {
+                LogService.e("Dashboard: Failed to fetch user boats", e);
+              });
+        }
       });
     }
 
+    // Unpaired + Journey Active = Use phone GPS and upload to backend
+    if (!SessionService.isPaired && SessionService.isJourneyActive) {
+      HardwareService.getCurrentLocation().then((position) {
+        if (mounted) {
+          setState(() {
+            _currentPosition = position;
+            _lastUpdated = DateTime.now(); // Update localized "Updated" time
+          });
+        }
+        // Upload to Backend if we have a valid position and user is logged in
+        if (position != null && _user != null && _user!.boatId != null) {
+          // We use the user's boatId to tag the location
+          BackendService.updateLiveLocation(
+            lat: position.latitude,
+            lon: position.longitude,
+            battery:
+                100, // Phone battery not easily accessible without package, mocking 100
+            boatId: _user!.boatId!,
+            speed: position.speed,
+            heading: position.heading,
+          ).catchError((e) {
+            LogService.e("Dashboard: Error uploading live location", e);
+          });
+        }
+      });
+      // If journey is active and unpaired, we handle location updates here and don't proceed to fetch boat status.
+      // The return statement ensures we don't try to fetch boat status from a device that isn't paired.
+      return;
+    }
+
+    // Paired Mode = Fetch status from device (Existing)
     if (!SessionService.isPaired) {
       final position = await HardwareService.getCurrentLocation();
       if (mounted) {
@@ -108,6 +163,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
+    // --- Journey Mode Logic (Unpaired) ---
+    // Note: With native background service, we might not need this timer-based logic anymore
+    // if the background service handles it.
+    // However, for immediate feedback while app is open, we can keep it OR rely solely on the service.
+    // If we rely on service, we should ensure service is running.
+    // Let's keep this for now but maybe reduce frequency or rely on service if active.
+    // Actually, if we have a background service, it runs independently.
+    // If we duplicate logic here, we might send double updates.
+    // So we should REMOVE this block if the background service is doing the work.
+    // But the background service runs on a timer (e.g. 30s).
+    // Let's disable this block to avoid duplication and rely on the native service.
+
+    /*
+    if (!SessionService.isPaired && SessionService.isJourneyActive) {
+       // ... (Logic moved to BackgroundService)
+    }
+    */
+
     final boat = await HardwareService.getBoatStatus('123');
     if (!mounted) return;
     setState(() {
@@ -115,7 +188,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _lastUpdated = DateTime.now();
     });
 
-    if (boat != null && SessionService.isPaired) {
+    if (SessionService.isPaired) {
       final title = AppLocalizations.of(context)!.translate('lowBatteryTitle');
       final message = AppLocalizations.of(
         context,
@@ -129,7 +202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     // Check for border proximity
     bool nearBorder = false;
-    if (SessionService.isPaired && boat != null) {
+    if (SessionService.isPaired) {
       final lastFix = boat.lastFix;
       if (lastFix['lat'] != null && lastFix['lng'] != null) {
         nearBorder = GeofenceService.isNearBorder(
@@ -151,13 +224,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _connectToDevice() async {
     setState(() => _isConnecting = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          AppLocalizations.of(context)!.translate('connectingToDevice'),
-        ),
-        duration: const Duration(seconds: 2),
-      ),
+    UiUtils.showSnackBar(
+      context,
+      AppLocalizations.of(context)!.translate('connectingToDevice'),
+      duration: const Duration(seconds: 2),
     );
 
     // Try to connect to the known SSID
@@ -173,19 +243,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (mounted) {
       setState(() => _isConnecting = false);
-      if (_boat != null && _boat!.name != "Connection Failed") {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Connected successfully!"),
-            backgroundColor: kGreen500,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Connection failed. Please ensure device is on."),
-            backgroundColor: kRed600,
-          ),
+      if (_boat == null || _boat!.name == "Connection Failed") {
+        UiUtils.showSnackBar(
+          context,
+          "Connection failed. Please ensure device is on.",
+          isError: true,
         );
       }
     }
@@ -251,7 +313,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Expanded(
                 child: Column(
                   children: [
-                    Expanded(flex: 2, child: _buildRescueButton()),
+                    Expanded(flex: 2, child: _buildJourneyButton()),
                     const SizedBox(height: 12),
                     Expanded(
                       flex: 2,
@@ -259,7 +321,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         children: [
                           Expanded(child: _buildActionGrid()),
                           const SizedBox(width: 12),
-                          Expanded(child: _buildSettingsButton()),
+                          Expanded(child: _buildRescueButton()),
                         ],
                       ),
                     ),
@@ -269,11 +331,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Row(
                         children: [
                           Expanded(child: _buildSyncButton()),
-                          if (_user?.role == 'owner' &&
-                              SessionService.isPaired) ...[
-                            const SizedBox(width: 12),
-                            Expanded(child: _buildShowQRButton()),
-                          ],
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildQRActionButton()),
                         ],
                       ),
                     ),
@@ -316,7 +375,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   )!.translate('rescueMode').toUpperCase(),
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -391,7 +450,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             MaterialPageRoute(builder: (_) => const PairingScreen()),
           );
           if (result == true) {
-            _handlePairingSuccess();
+            // Defer success handling to allow pop animation to finish
+            if (mounted) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _handlePairingSuccess();
+              });
+            }
           }
         };
       } else {
@@ -409,7 +473,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Container(
       decoration: BoxDecoration(
-        color: isPaired ? (isConnected ? kZinc800 : kBlue600) : kGreen500,
+        color: isPaired ? (isConnected ? kZinc800 : kBlue600) : kBlue600,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Material(
@@ -432,7 +496,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   )
                 else
-                  Icon(icon, size: 28, color: Colors.white),
+                  Icon(icon, size: 32, color: Colors.white),
                 const SizedBox(height: 8),
                 Text(
                   label,
@@ -452,20 +516,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _handlePairingSuccess() {
-    print("Dashboard: Pairing success handled.");
+    LogService.i("Dashboard: Pairing success handled.");
     try {
       _loadData();
       _startStatusTimer();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Pairing successful. Caching offline maps..."),
-            duration: Duration(seconds: 2),
-          ),
+        UiUtils.showSnackBar(
+          context,
+          "Pairing successful. Caching offline maps...",
         );
         HardwareService.getCurrentLocation().then((pos) {
           if (pos != null && mounted) {
-            print(
+            LogService.i(
               "Dashboard: Caching map area for ${pos.latitude}, ${pos.longitude}",
             );
             MapService.cacheArea(
@@ -473,17 +535,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
               pos.latitude,
               pos.longitude,
             ).catchError((e) {
-              print("Dashboard: Map caching error: $e");
+              LogService.e("Dashboard: Map caching error", e);
             });
           }
         });
       }
     } catch (e) {
-      print("Dashboard: Error in _handlePairingSuccess: $e");
+      LogService.e("Dashboard: Error in _handlePairingSuccess", e);
     }
   }
 
-  Widget _buildSettingsButton() {
+  Widget _buildQRActionButton() {
+    final bool isOwner = _user?.role == 'owner';
+    final bool isPaired = SessionService.isPaired;
+
+    // Determine mode:
+    // Owner: ALWAYS Show QR (to let others join)
+    // Joiner (Paired): Show QR (to let others track/join same boat)
+    // Joiner (Unpaired) / Land: Scan QR (to join a boat)
+    final bool showMode = isOwner || (isPaired && _user?.role != 'land_user');
+
     return Container(
       decoration: BoxDecoration(
         color: kZinc800,
@@ -492,14 +563,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () async {
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            );
-            // Restart timer in case interval changed
-            _startStatusTimer();
-            if (mounted) setState(() {});
+          onTap: () {
+            if (showMode) {
+              // Show QR
+              if (_boat != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => QRCodeScreen(boat: _boat!)),
+                );
+              } else {
+                // Try fetching data if IDs are available
+                final boatId = SessionService.pairedBoatId ?? _user?.boatId;
+                if (boatId != null) {
+                  UiUtils.showSnackBar(context, "Fetching boat data...");
+                  HardwareService.getBoatStatus(boatId)
+                      .then((boat) {
+                        if (mounted) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => QRCodeScreen(boat: boat),
+                            ),
+                          );
+                        }
+                      })
+                      .catchError((e) {
+                        if (mounted) {
+                          UiUtils.showSnackBar(
+                            context,
+                            "Failed to load data: $e",
+                            isError: true,
+                          );
+                        }
+                      });
+                } else {
+                  UiUtils.showSnackBar(
+                    context,
+                    "Boat data not available yet",
+                    isError: true,
+                  );
+                }
+              }
+            } else {
+              // Scan QR
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const QRScanScreen()),
+              );
+            }
           },
           borderRadius: BorderRadius.circular(20),
           child: Padding(
@@ -507,13 +618,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.settings, size: 28, color: Colors.white),
+                Icon(
+                  showMode ? Icons.qr_code : Icons.qr_code_scanner,
+                  size: 24,
+                  color: Colors.white,
+                ),
                 SizedBox(height: 8),
                 Text(
-                  AppLocalizations.of(context)!.translate('settings'),
+                  showMode ? "SHOW QR" : "SCAN QR",
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -551,7 +666,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   )!.translate('syncStatus').toUpperCase(),
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -563,30 +678,136 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildShowQRButton() {
+  Widget _buildJourneyButton() {
+    final isJourneyActive = SessionService.isJourneyActive;
+    // Only show if unpaired? Or always?
+    // "only that period we will transmit the data gps data ... unpaired functionality"
+    // So primarily for unpaired mode.
+    // if (SessionService.isPaired) {
+    //   return const SizedBox.shrink(); // Hide if paired (module handles it)
+    // }
+
     return Container(
       height: double.infinity,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: kZinc800,
+        color: isJourneyActive ? kRed600 : kGreen500,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            if (_boat != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => QRCodeScreen(boat: _boat!)),
-              );
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Boat data not available yet"),
-                  backgroundColor: kRed600,
-                ),
-              );
+          onTap: () async {
+            if (_isProcessingJourney) return;
+            setState(() => _isProcessingJourney = true);
+
+            try {
+              // Paired Mode Logic
+              if (SessionService.isPaired) {
+                // Only connect if we are STARTING a journey
+                if (!isJourneyActive) {
+                  await _connectToDevice();
+
+                  // Start watchdog
+                  Future.delayed(const Duration(seconds: 10), () {
+                    if (mounted &&
+                        (_boat == null || _boat!.name == "Connection Failed")) {
+                      UiUtils.showSnackBar(
+                        context,
+                        "Unable to connect to device. Retrying...",
+                        isError: true,
+                      );
+                    }
+                  });
+                }
+                // Fall through to toggle logic below
+              }
+
+              // Unpaired Mode Logic
+              if (!isJourneyActive) {
+                // Request Permission FIRST
+                var status = await Permission.location.request();
+                if (status.isDenied || status.isPermanentlyDenied) {
+                  if (mounted) {
+                    UiUtils.showSnackBar(
+                      context,
+                      "Location permission is required for journey tracking.",
+                      isError: true,
+                    );
+                  }
+                  return;
+                }
+
+                // Check Location Service status BEFORE starting
+                bool serviceEnabled =
+                    await Geolocator.isLocationServiceEnabled();
+                if (!serviceEnabled) {
+                  if (mounted) {
+                    await showDialog(
+                      // await the dialog
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Text(
+                          AppLocalizations.of(
+                            context,
+                          )!.translate('enableLocation'),
+                        ),
+                        content: const Text(
+                          "Location services are disabled. Please enable them to start a journey.",
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              Geolocator.openLocationSettings();
+                            },
+                            child: const Text("Open Settings"),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text("Cancel"),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  return;
+                }
+              }
+
+              // Toggle Journey (Existing logic)
+              final newState = !isJourneyActive;
+              await SessionService.saveJourneyState(newState);
+
+              // Cache User ID and Boat ID for Background Service
+              if (_user != null) {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('user_id_cache', _user!.id);
+                if (_user!.boatId != null) {
+                  await prefs.setString('boat_id_cache', _user!.boatId!);
+                }
+              }
+
+              final service = FlutterBackgroundService();
+              if (newState) {
+                await service.startService();
+                UiUtils.showSnackBar(
+                  context,
+                  "Journey Started! Background tracking enabled.",
+                );
+                // Ensure periodic timer is also running for UI updates if needed
+                _startStatusTimer();
+              } else {
+                service.invoke("stopService");
+                UiUtils.showSnackBar(
+                  context,
+                  "Journey Ended. Background tracking disabled.",
+                );
+              }
+
+              if (mounted) setState(() {});
+            } finally {
+              if (mounted) setState(() => _isProcessingJourney = false);
             }
           },
           borderRadius: BorderRadius.circular(20),
@@ -594,18 +815,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.symmetric(vertical: 8.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.qr_code, size: 24, color: Colors.white),
-                const SizedBox(height: 6),
-                Text(
-                  "SHOW QR",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+              children: _isProcessingJourney
+                  ? [
+                      const SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        "Connecting...",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ]
+                  : [
+                      Icon(
+                        isJourneyActive
+                            ? Icons.stop_circle
+                            : Icons.play_circle_fill,
+                        size: 48,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        isJourneyActive
+                            ? AppLocalizations.of(
+                                context,
+                              )!.translate('endJourney')
+                            : AppLocalizations.of(
+                                context,
+                              )!.translate('startJourney'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18, // Slightly smaller to fit
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
             ),
           ),
         ),
@@ -650,66 +900,98 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-              if (SessionService.isPaired)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (_boat?.batteryLevel ?? 0) < 20
-                        ? const Color(0xFF450a0a) // Dark Red
-                        : (_boat?.batteryLevel ?? 0) <= 50
-                        ? const Color(0xFF431407) // Dark Orange
-                        : const Color(0xFF14532D), // Dark Green
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: (_boat?.batteryLevel ?? 0) < 20
-                          ? kRed600
-                          : (_boat?.batteryLevel ?? 0) <= 50
-                          ? Colors.orange
-                          : const Color(0xFF166534),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.bolt,
-                        color: (_boat?.batteryLevel ?? 0) < 20
-                            ? kRed600
-                            : (_boat?.batteryLevel ?? 0) <= 50
-                            ? Colors.orange
-                            : kGreen500,
-                        size: 16,
+              Row(
+                children: [
+                  if (SessionService.isPaired) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
                       ),
-                      SizedBox(width: 4),
-                      Text(
-                        "${_boat?.batteryLevel ?? 0}%",
-                        style: TextStyle(
+                      decoration: BoxDecoration(
+                        color: (_boat?.batteryLevel ?? 0) < 20
+                            ? const Color(0xFF450a0a) // Dark Red
+                            : (_boat?.batteryLevel ?? 0) <= 50
+                            ? const Color(0xFF431407) // Dark Orange
+                            : const Color(0xFF14532D), // Dark Green
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
                           color: (_boat?.batteryLevel ?? 0) < 20
                               ? kRed600
                               : (_boat?.batteryLevel ?? 0) <= 50
                               ? Colors.orange
-                              : kGreen500,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                              : const Color(0xFF166534),
                         ),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.bolt,
+                            color: (_boat?.batteryLevel ?? 0) < 20
+                                ? kRed600
+                                : (_boat?.batteryLevel ?? 0) <= 50
+                                ? Colors.orange
+                                : kGreen500,
+                            size: 16,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            "${_boat?.batteryLevel ?? 0}%",
+                            style: TextStyle(
+                              color: (_boat?.batteryLevel ?? 0) < 20
+                                  ? kRed600
+                                  : (_boat?.batteryLevel ?? 0) <= 50
+                                  ? Colors.orange
+                                  : kGreen500,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  IconButton(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      );
+                      // Defer the update to allow pop animation to complete smoothly
+                      if (mounted) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            _startStatusTimer();
+                            setState(() {});
+                          }
+                        });
+                      }
+                    },
+                    icon: const Icon(
+                      Icons.settings,
+                      color: Colors.white70,
+                      size: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                   ),
-                ),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 16),
+          // Status Badges Row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildStatusBadge(
-                Icons.network_cell,
-                "Network",
-                _hasInternet,
-              ), // Network is usually cellular on phone, maybe keep false or check internet? Keeping false as per current mock.
+              _buildStatusBadge(Icons.network_cell, "Network", _hasInternet),
               _buildStatusBadge(
                 Icons.wifi,
                 'Module',
@@ -731,11 +1013,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          const Divider(
-            color: kZinc800,
-            height: 1, // Occupies 1px vertical space roughly
-            thickness: 1,
-          ),
+          const Divider(color: kZinc800, height: 1, thickness: 1),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -758,7 +1036,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
 
               // Coordinates
-              // Coordinates or Status
               _boat?.gpsStatus == "SEARCHING"
                   ? const Text(
                       "GPS Searching...",
@@ -832,6 +1109,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatTime(DateTime time) {
     final localTime = time.toLocal();
-    return "${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}:${localTime.second.toString().padLeft(2, '0')}";
+    return "${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}";
   }
 }

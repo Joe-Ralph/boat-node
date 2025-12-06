@@ -74,5 +74,8 @@
   "gpsUpdateInterval": "GPS Update Interval",
   "pairDeviceButton": "PAIR DEVICE",
   "connectDevice": "Connect Device",
-  "seconds": "seconds"
+  "seconds": "seconds",
+  "startJourney": "START JOURNEY",
+  "endJourney": "END JOURNEY",
+  "enableLocation": "Enable Location"
 }
