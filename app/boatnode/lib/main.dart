@@ -20,20 +20,38 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize session service
-  await SessionService.init();
-
-  // Initialize Supabase
-  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-  const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
-
-  if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
-    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
-  } else {
-    debugPrint("Warning: Supabase keys not found in environment variables.");
+  try {
+    await SessionService.init();
+  } catch (e) {
+    debugPrint("Error initializing SessionService: $e");
   }
 
-  // Initialize background service
-  await BackgroundService.initializeService();
+  // Initialize Supabase
+  try {
+    const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+    const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+
+    if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
+      await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+    } else {
+      debugPrint("Warning: Supabase keys not found in environment variables.");
+    }
+  } catch (e) {
+    debugPrint("Error initializing Supabase: $e");
+  }
+
+  // Initialize background service with timeout
+  try {
+    // Timeout after 2 seconds to prevent app hang
+    await BackgroundService.initializeService().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        debugPrint("BackgroundService initialization timed out.");
+      },
+    );
+  } catch (e) {
+    debugPrint("Error initializing BackgroundService: $e");
+  }
 
   runApp(
     ChangeNotifierProvider(

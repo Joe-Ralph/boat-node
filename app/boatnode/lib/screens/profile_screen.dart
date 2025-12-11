@@ -26,7 +26,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   final List<Map<String, String>> _roles = [
     {'value': 'owner', 'label': 'Boat Owner'},
-    {'value': 'joiner', 'label': 'Boat Joiner'},
+    {'value': 'crew', 'label': 'Boat Crew'},
     {'value': 'land_user', 'label': 'Land User'},
     {'value': 'land_admin', 'label': 'Land Admin'},
   ];

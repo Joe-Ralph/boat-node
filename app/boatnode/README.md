@@ -14,3 +14,10 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+## Commands to run the app
+
+flutter build apk --debug \
+  --dart-define=ENV=dev \
+  --dart-define=SUPABASE_URL=https://<dev>.supabase.co \
+  --dart-define=SUPABASE_ANON_KEY=sb_anon_dev_key
