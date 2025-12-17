@@ -1,0 +1,19 @@
+/* Google Fonts: Rajdhani for futuristic technical look */
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Utilities */
+.text-glow {
+  text-shadow: 0 0 10px currentColor;
+}
+
+/* Ensure no white flash on load and set global font */
+html,
+body {
+  background-color: #020205;
+  font-family: 'Rajdhani', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

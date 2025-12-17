@@ -1,0 +1,14 @@
+**/.vite/
+
+**/node_modules/
+
+**/build/
+
+**/dist/
+
+**/.vscode/
+
+**/prototype/
+
+**/.firebase/
+
