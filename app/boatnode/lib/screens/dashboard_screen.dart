@@ -26,6 +26,8 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../utils/ui_utils.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:flutter_callkit_incoming/entities/entities.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -53,6 +55,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _checkInternet();
     _loadData();
     _startStatusTimer();
+    _setupCallKitListener();
+  }
+
+  void _setupCallKitListener() {
+    FlutterCallkitIncoming.onEvent.listen((event) {
+      if (event != null && event.event == Event.actionCallAccept) {
+        _handleAcceptedCall(event.body);
+      }
+    });
+
+    // Check if app was launched from a call
+    _checkLastCall();
+  }
+
+  Future<void> _checkLastCall() async {
+    var calls = await FlutterCallkitIncoming.activeCalls();
+    if (calls is List && calls.isNotEmpty) {
+      // Loop or pick first? Usually handled by event, but if missed:
+      // _handleAcceptedCall(calls.first);
+    }
+  }
+
+  void _handleAcceptedCall(Map<dynamic, dynamic> body) {
+    LogService.i("SOS Call Accepted: $body");
+    // Extract location
+    if (body['extra'] != null) {
+      final lat = body['extra']['lat'];
+      final long = body['extra']['long'];
+      if (lat != null && long != null) {
+        // Navigate to NearbyScreen or Map
+        // For simplicity, we assume NearbyScreen can handle showing this location or we pass it
+        // We'll pass it as arguments or modify NearbyScreen to accept target.
+        // For now, let's just push NearbyScreen.
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const NearbyScreen()),
+        );
+      }
+    }
   }
 
   void _startStatusTimer() {

@@ -1,57 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-// import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:async';
 import 'l10n/app_localizations.dart';
-// import 'l10n/locale_provider.dart';
-import 'screens/login_screen.dart';
-import 'screens/dashboard_screen.dart';
-import 'services/session_service.dart';
-import 'services/auth_service.dart';
-import 'screens/profile_screen.dart';
-import 'models/user.dart';
+import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
-import 'services/background_service.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 
 void main() async {
   // Ensure Flutter binding is initialized
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize session service
-  try {
-    await SessionService.init();
-  } catch (e) {
-    debugPrint("Error initializing SessionService: $e");
-  }
-
-  // Initialize Supabase
-  try {
-    const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-    const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
-
-    if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
-      await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
-    } else {
-      debugPrint("Warning: Supabase keys not found in environment variables.");
-    }
-  } catch (e) {
-    debugPrint("Error initializing Supabase: $e");
-  }
-
-  // Initialize background service with timeout
-  try {
-    // Timeout after 2 seconds to prevent app hang
-    await BackgroundService.initializeService().timeout(
-      const Duration(seconds: 2),
-      onTimeout: () {
-        debugPrint("BackgroundService initialization timed out.");
-      },
-    );
-  } catch (e) {
-    debugPrint("Error initializing BackgroundService: $e");
-  }
 
   runApp(
     ChangeNotifierProvider(
@@ -97,60 +53,9 @@ class BoatNodeApp extends StatelessWidget {
             Locale('ml', ''), // Malayalam
             Locale('hi', ''), // Hindi
           ],
-          home: FutureBuilder<bool>(
-            future: _checkSession(),
-            builder: (context, snapshot) {
-              // Show a loading indicator while checking session
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              // If we have a valid session, check user profile
-              if (snapshot.data == true) {
-                return FutureBuilder<User?>(
-                  future: AuthService.getCurrentUser(),
-                  builder: (context, userSnapshot) {
-                    if (userSnapshot.connectionState != ConnectionState.done) {
-                      return const Scaffold(
-                        body: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-
-                    final user = userSnapshot.data;
-                    if (user != null && user.role == null) {
-                      return ProfileScreen(user: user);
-                    }
-                    return const DashboardScreen();
-                  },
-                );
-              }
-
-              return const LoginScreen();
-            },
-          ),
+          home: const SplashScreen(),
         );
       },
     );
-  }
-
-  // Check if we have a valid session
-  Future<bool> _checkSession() async {
-    final session = SessionService.currentSession;
-    if (session == null) return false;
-
-    try {
-      // Validate the session with the server
-      final isValid = await AuthService.validateSession(session.token);
-      if (!isValid) {
-        await SessionService.clearSession();
-      }
-      return isValid;
-    } catch (e) {
-      // If there's an error, assume invalid session
-      await SessionService.clearSession();
-      return false;
-    }
   }
 }

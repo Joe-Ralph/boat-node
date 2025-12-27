@@ -99,12 +99,17 @@ class SessionService {
   static Future<void> saveUser(User user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userKey, jsonEncode(user.toJson()));
+    await prefs.setString(
+      'user_id_cache',
+      user.id,
+    ); // Valid for BackgroundService
     _currentUser = user;
   }
 
   static Future<void> clearUser() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userKey);
+    await prefs.remove('user_id_cache');
     _currentUser = null;
   }
 

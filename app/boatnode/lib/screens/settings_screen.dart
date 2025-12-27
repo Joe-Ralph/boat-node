@@ -112,6 +112,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _deleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text(
+          'Delete Account?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This action cannot be undone. All your data including boat logs and settings will be permanently deleted.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'CANCEL',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('DELETE', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await AuthService.deleteAccount();
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar('Failed to delete account: $e', isError: true);
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -246,6 +293,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       context.translate('debugMenu'),
                       style: const TextStyle(
                         color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Delete Account Button (Added)
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: _deleteAccount,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: const Color(
+                        0xFF2B0000,
+                      ), // Very dark red background
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(
+                          color: Color(0xFF8B0000),
+                        ), // Dark red border
+                      ),
+                    ),
+                    child: const Text(
+                      'Delete Account',
+                      style: TextStyle(
+                        color: Colors.red,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),

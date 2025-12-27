@@ -3,6 +3,8 @@ import 'package:slide_to_confirm/slide_to_confirm.dart';
 // import 'package:slider_button/slider_button.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_localizations.dart';
+import 'package:boatnode/services/sos_service.dart';
+import '../utils/ui_utils.dart';
 
 // Add these to your localization files if not already present
 // English (en.json):
@@ -57,19 +59,50 @@ class _RescueScreenState extends State<RescueScreen>
     super.dispose();
   }
 
-  void _activateDistressSignal() {
+  Future<void> _activateDistressSignal() async {
     setState(() => _isActive = true);
     final localizations = AppLocalizations.of(context)!;
     _addLog(localizations.translate('initiatingDistress'));
-    _addLog("${localizations.translate('buzzer')}: ON");
-    final gpsMessage =
-        "${localizations.translate('gps')}: ${localizations.translate('fixAcquired')}";
-    Future.delayed(const Duration(seconds: 1), () => _addLog(gpsMessage));
+
+    try {
+      await SosService.sendSos();
+      _addLog("SOS Broadcast Sent to Nearby Users!");
+      _addLog("${localizations.translate('buzzer')}: ON");
+
+      final gpsMessage =
+          "${localizations.translate('gps')}: ${localizations.translate('fixAcquired')}";
+      Future.delayed(const Duration(seconds: 1), () => _addLog(gpsMessage));
+    } catch (e) {
+      _addLog("Error transmitting SOS: $e");
+      setState(() => _isActive = false); // Revert state on error
+
+      if (mounted) {
+        UiUtils.showSnackBar(context, "Failed to send SOS: $e", isError: true);
+      }
+    }
   }
 
-  void _cancelDistressSignal() {
-    setState(() => _isActive = false);
-    _addLog(AppLocalizations.of(context)!.translate('distressCancelled'));
+  Future<void> _cancelDistressSignal() async {
+    try {
+      await SosService.cancelSos();
+      if (mounted) {
+        setState(() => _isActive = false);
+        _addLog(AppLocalizations.of(context)!.translate('distressCancelled'));
+      }
+    } catch (e) {
+      _addLog("Error cancelling SOS: $e");
+      if (mounted) {
+        UiUtils.showSnackBar(
+          context,
+          "Failed to cancel SOS: $e",
+          isError: true,
+        );
+        // We might want to set isActive = false anyway if it's a network error,
+        // but strictly speaking we failed to tell server.
+        // For UX, usually better to force cancel locally too.
+        setState(() => _isActive = false);
+      }
+    }
   }
 
   void _addLog(String log) {

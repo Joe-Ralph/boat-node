@@ -56,12 +56,12 @@ class AuthService {
     app_user.User? user = await _fetchUserProfile(sbUser.id);
 
     user ??= app_user.User(
-        id: sbUser.id,
-        displayName: session.displayName,
-        email: email,
-        role: null,
-        villageId: null,
-      );
+      id: sbUser.id,
+      displayName: session.displayName,
+      email: email,
+      role: null,
+      villageId: null,
+    );
 
     await SessionService.saveSession(session);
     await SessionService.saveUser(user);
@@ -72,6 +72,16 @@ class AuthService {
   static Future<void> logout() async {
     await Supabase.instance.client.auth.signOut();
     await SessionService.clearSession();
+  }
+
+  static Future<void> deleteAccount() async {
+    try {
+      await Supabase.instance.client.rpc('delete_account');
+      await logout();
+    } catch (e) {
+      LogService.e("Error deleting account", e);
+      rethrow;
+    }
   }
 
   static Future<app_user.User> updateProfile(
