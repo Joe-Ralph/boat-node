@@ -800,6 +800,8 @@ const App: React.FC = () => {
         // === ACT 3: BLACKOUT (75% - 90%) ===
         tl.addLabel("blackout", `deep+=${deepMoveDur}`);
 
+        const blackoutDur = 25; // Increased from ~7 to 25 to match other sections
+
         // Boat turns Red
         tl.to(boatMat.color, { r: 1, g: 0, b: 0, duration: 0.5 }, "blackout");
 
@@ -817,12 +819,12 @@ const App: React.FC = () => {
         tl.to(section3Ref.current, { autoAlpha: 1, duration: 0.1 }, "blackout+=1");
         tl.to(q3(".story-line"), { opacity: 1, duration: 1, stagger: 1.5 }, "blackout+=1.1");
 
-        tl.to(q3(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, "blackout+=6");
-        tl.to(section3Ref.current, { autoAlpha: 0, duration: 0.5 }, "blackout+=7.5");
+        tl.to(q3(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, `blackout+=${blackoutDur - 6}`);
+        tl.to(section3Ref.current, { autoAlpha: 0, duration: 0.5 }, `blackout+=${blackoutDur - 2}`);
 
 
         // === ACT 3.5: NEDUVAAI ACTIVATES (90% - 95%) ===
-        tl.addLabel("activates", "blackout+=7");
+        tl.addLabel("activates", `blackout+=${blackoutDur}`); // Was blackout+=7
 
         const q35 = gsap.utils.selector(section35Ref.current);
         tl.to(section35Ref.current, { autoAlpha: 1, duration: 0.1 }, "activates");
@@ -870,12 +872,14 @@ const App: React.FC = () => {
         // Fade Opacity back to 1
         tl.to([landMat, towerMat], { opacity: 1, duration: 2 }, "activates");
 
-        tl.to(q35(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, "activates+=5");
-        tl.to(section35Ref.current, { opacity: 0, duration: 0.5 }, "activates+=6.5");
+        const activatesDur = 20; // Increased spacing for reading Neduvaai Online part
+
+        tl.to(q35(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, `activates+=${activatesDur - 5}`);
+        tl.to(section35Ref.current, { opacity: 0, duration: 0.5 }, `activates+=${activatesDur - 3.5}`);
 
 
         // === ACT 4: CONNECTION (95% - 100%) ===
-        tl.addLabel("connection", "activates+=5");
+        tl.addLabel("connection", `activates+=${activatesDur}`);
 
         // Camera zoom out to see everything
         // Needs to see from x=60 all the way to x=-50 (Land)
@@ -1153,7 +1157,7 @@ const App: React.FC = () => {
                 {/* SECTION 1: DEPARTURE */}
                 <div ref={section1Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center max-w-2xl px-6">
-                        <h2 className="text-4xl md:text-7xl font-bold tracking-tight text-white mb-6">Leaving the Shore</h2>
+                        <h2 className="text-4xl md:text-7xl font-bold tracking-tight text-[#D54DFF] mb-6">Leaving the Shore</h2>
                         <p className="text-lg md:text-3xl text-white leading-relaxed font-bold drop-shadow-md">
                             <span className="story-line font-medium opacity-0 text-white block">Someone leaves for work today.</span>
                             <span className="story-line font-medium opacity-0 text-white block">Their family waits behind.</span>
@@ -1164,7 +1168,7 @@ const App: React.FC = () => {
                 {/* SECTION 2: THE DEEP */}
                 <div ref={section2Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center max-w-2xl px-6">
-                        <h2 className="text-4xl md:text-7xl font-bold text-white mb-6 drop-shadow-lg">The Silent Dark</h2>
+                        <h2 className="text-4xl md:text-7xl font-bold text-[#D54DFF] mb-6 drop-shadow-lg">The Silent Dark</h2>
                         <p className="text-lg md:text-3xl text-red-50 leading-relaxed font-bold drop-shadow-md">
                             <span className="story-line font-medium opacity-0 text-white block">Beyond signal. Beyond visibility.</span>
                             <span className="story-line font-medium opacity-0 text-white block">No one is watching.</span>
@@ -1201,9 +1205,9 @@ const App: React.FC = () => {
             {/* SECTION 4: CONNECTS (Static Footer Section below the scroll experience) */}
             <section ref={section4Ref} className="relative z-20 w-full min-h-screen bg-[#111116] flex items-center justify-center py-20">
                 <div className="text-center max-w-4xl px-6 bg-[#050505]/80 backdrop-blur-xl p-8 md:p-12 rounded-2xl border border-[#D54DFF]/30 shadow-[0_0_80px_rgba(213,77,255,0.15)] transform translate-y-12">
-                    
+
                     {/* BRANDING REVEAL */}
-                     <div className="flex flex-col items-center justify-center m-1">
+                    <div className="flex flex-col items-center justify-center m-1">
                         <img
                             src="/icon.png"
                             className="w-24 h-24 md:w-32 md:h-32 mb-6 mix-blend-screen"
@@ -1216,7 +1220,7 @@ const App: React.FC = () => {
                     <h2 className="text-3xl md:text-4xl font-light text-zinc-300 mb-6 uppercase tracking-widest">
                         Connects.
                     </h2>
-                    <p className="text-xl mb-8 max-w-2xl mx-auto text-[#D54DFF]">
+                    <p className="text-2xl md:text-3xl mb-10 max-w-3xl mx-auto text-transparent bg-clip-text bg-gradient-to-r from-violet-300 via-[#D54DFF] to-cyan-300 font-medium tracking-wide drop-shadow-[0_0_15px_rgba(213,77,255,0.4)]">
                         Safety should not be a privilege.
                     </p>
 

@@ -126,7 +126,7 @@ const LandingOverlay: React.FC = () => {
                 uTime: { value: 0 },
                 uMouse: { value: new THREE.Vector2(-999, -999) },
                 uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-                uSize: { value: 60.0 } // Larger dots since camera is far
+                uSize: { value: 200.0 } // Larger soft particles for glow effect
             },
             vertexShader: `
                 uniform float uTime;
@@ -206,13 +206,18 @@ const LandingOverlay: React.FC = () => {
                 varying vec3 vColor;
                 
                 void main() {
-                    // Sharp Circular Dot (No Glow)
+                    // Calculate distance from center of the point (0.0 to 0.5 at corners)
                     float dist = distance(gl_PointCoord, vec2(0.5));
                     
-                    // Strict Cutoff
-                    if (dist > 0.5) discard;
+                    // Create a soft glow by inverting the distance
+                    // 0.5 is the edge (alpha 0), 0.0 is center (alpha 1)
+                    float strength = 1.0 - (dist * 2.0);
+                    strength = max(0.0, strength); // Clamp negative values
                     
-                    gl_FragColor = vec4(vColor, 1.0);
+                    // Non-linear falloff for a "hot" center and soft outer glow
+                    strength = pow(strength, 1.5);
+                    
+                    gl_FragColor = vec4(vColor, strength);
                 }
             `
         });
@@ -282,20 +287,22 @@ const LandingOverlay: React.FC = () => {
         <div className="w-full h-full bg-black flex flex-col items-center justify-center font-['Rajdhani']">
             {/* Full Screen Particle Background */}
             <div ref={containerRef} className="absolute inset-0 z-0 pointer-events-none">
-                <canvas ref={canvasRef} className="w-full h-full opacity-60" />
+                <canvas ref={canvasRef} className="w-full h-full" />
             </div>
 
             {/* Typography - Questions Only */}
             <div className="text-center z-10 max-w-4xl px-6">
-                 <h1 className="text-3xl md:text-6xl font-light tracking-wide text-white leading-tight">
-                    Ever wondered how the fish you eat reaches you?<br />
-                    <span className="text-cyan-200 font-medium">Someone risks their life for it.</span>
+                <h1 className="text-3xl md:text-6xl font-light tracking-wide text-white leading-tight drop-shadow-[0_4px_8px_rgba(0,0,0,1)]">
+                    Ever wondered how the fish on your plate reaches you?<br />
+                    <span className="text-[#D54DFF] font-medium">Someone risks their life for it.</span>
                 </h1>
-                <p className="text-gray-500 text-xs md:text-sm tracking-[0.3em] uppercase mt-8 animate-pulse">
-                    Scroll to begin
-                </p>
+
             </div>
-        </div>
+
+            <p className="absolute bottom-24 z-10 text-gray-500 text-xs md:text-sm tracking-[0.3em] uppercase animate-pulse pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
+                Scroll to begin
+            </p>
+        </div >
     );
 };
 
