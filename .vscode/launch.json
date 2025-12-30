@@ -1,28 +1,38 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "boatnode",
-            "cwd": "app/boatnode",
+            "name": "BoatNode (Dev)",
             "request": "launch",
-            "type": "dart"
+            "cwd": "app/boatnode",
+            "type": "dart",
+            "flutterMode": "debug",
+            "args": [
+                "--dart-define=SUPABASE_URL=https://ltlftxaskaebqwptcbdq.supabase.co",
+                "--dart-define=SUPABASE_ANON_KEY=sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz"
+            ]
         },
         {
-            "name": "boatnode (profile mode)",
-            "cwd": "app/boatnode",
+            "name": "BoatNode (Profile)",
             "request": "launch",
+            "cwd": "app/boatnode",
             "type": "dart",
-            "flutterMode": "profile"
+            "flutterMode": "profile",
+            "args": [
+                "--dart-define=SUPABASE_URL=https://ltlftxaskaebqwptcbdq.supabase.co",
+                "--dart-define=SUPABASE_ANON_KEY=sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz"
+            ]
         },
         {
-            "name": "boatnode (release mode)",
-            "cwd": "app/boatnode",
+            "name": "BoatNode (Release)",
             "request": "launch",
+            "cwd": "app/boatnode",
             "type": "dart",
-            "flutterMode": "release"
+            "flutterMode": "release",
+            "args": [
+                "--dart-define=SUPABASE_URL=YOUR_SUPABASE_URL",
+                "--dart-define=SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY"
+            ]
         }
     ]
 }

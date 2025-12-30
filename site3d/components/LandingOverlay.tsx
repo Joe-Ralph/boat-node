@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
+import { Fish } from 'lucide-react';
 
 const LandingOverlay: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -284,32 +285,16 @@ const LandingOverlay: React.FC = () => {
                 <canvas ref={canvasRef} className="w-full h-full opacity-60" />
             </div>
 
-            {/* Central Logo Overlay */}
-            {/* Logo Overlay - "Dark parts transparent" via Screen blend mode */}
-            {/* Ensure it stays centered for the zoom */}
-            <div className="relative z-10 mb-8 group cursor-pointer transition-transform duration-700 hover:scale-110">
-                <img
-                    src="/icon.png"
-                    className="w-32 h-32 md:w-48 md:h-48 mix-blend-screen"
-                    alt="Neduvaai Icon"
-                />
-            </div>
-
-            {/* Typography */}
-            <div className="text-center z-10">
-                <h1 className="text-6xl md:text-8xl font-bold tracking-widest text-white mb-2">
-                    NEDUVAAI
+            {/* Typography - Questions Only */}
+            <div className="text-center z-10 max-w-4xl px-6">
+                 <h1 className="text-3xl md:text-6xl font-light tracking-wide text-white leading-tight">
+                    Ever wondered how the fish you eat reaches you?<br />
+                    <span className="text-cyan-200 font-medium">Someone risks their life for it.</span>
                 </h1>
-                <p className="text-gray-400 text-sm md:text-lg tracking-[0.5em] uppercase font-medium">
-                    The Voice of the Ocean
+                <p className="text-gray-500 text-xs md:text-sm tracking-[0.3em] uppercase mt-8 animate-pulse">
+                    Scroll to begin
                 </p>
             </div>
-
-            {/* Scroll Prompt */}
-            <div className="absolute bottom-10 flex flex-col items-center gap-2 animate-pulse opacity-50">
-                <span className="text-[10px] tracking-widest text-[#00FFFF] uppercase">Initialize</span>
-            </div>
-
         </div>
     );
 };

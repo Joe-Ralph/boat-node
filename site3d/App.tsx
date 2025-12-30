@@ -731,7 +731,11 @@ const App: React.FC = () => {
             duration: 5
         }, "start");
 
-        tl.to(section1Ref.current, { autoAlpha: 1, duration: 2 }, "start+=5"); // Fade in text LATER (User requested delay)
+        // Animate Lines Staggered
+        const q1 = gsap.utils.selector(section1Ref.current);
+        tl.to(section1Ref.current, { autoAlpha: 1, duration: 0.1 }, "start+=10"); // Container visible
+        tl.to(q1(".story-line"), { opacity: 1, duration: 1, stagger: 1.5 }, "start+=10.1");
+
 
         // Move Boat OUT
         // Boat moves from -20 to -5 (Edge of Safe Zone)
@@ -742,7 +746,10 @@ const App: React.FC = () => {
         // Mobile: Maintain z=30 distance. Desktop: Zoom to z=12.
         tl.to(camera.position, { x: 10, z: isMobile ? 30 : 12, duration: departureDur, ease: "power1.in" }, "start+=2"); // Follow boat to x=10
         // UI Fades
-        tl.to(section1Ref.current, { autoAlpha: 0, duration: 2 }, `start+=${departureDur - 2}`);
+        // UI Fades Out
+        tl.to(q1(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, `start+=${departureDur - 4}`);
+        tl.to(section1Ref.current, { autoAlpha: 0, duration: 0.5 }, `start+=${departureDur - 2}`);
+
 
         // GRADUAL TRANSITION ZONE
 
@@ -781,10 +788,14 @@ const App: React.FC = () => {
         }, "deep");
 
         // UI
-        // Show Deep Text immediately when "Deep" starts (No gap)
-        tl.to(section2Ref.current, { autoAlpha: 1, duration: 2 }, "deep"); // Was deep+10
+        // Show Deep Text Staggered
+        const q2 = gsap.utils.selector(section2Ref.current);
+        tl.to(section2Ref.current, { autoAlpha: 1, duration: 0.1 }, "deep");
+        tl.to(q2(".story-line"), { opacity: 1, duration: 1, stagger: 1.5 }, "deep+=0.1");
 
+        tl.to(q2(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, `deep+=${deepMoveDur - 7}`);
         tl.to(section2Ref.current, { autoAlpha: 0, duration: 0.5 }, `deep+=${deepMoveDur - 5}`);
+
 
         // === ACT 3: BLACKOUT (75% - 90%) ===
         tl.addLabel("blackout", `deep+=${deepMoveDur}`);
@@ -802,14 +813,21 @@ const App: React.FC = () => {
         // Actually, let's use a scale tween to pop it in.
         tl.to(boatPulseSphere.scale, { x: 1, y: 1, z: 1, duration: 0 }, "blackout"); // Reset scale
 
-        tl.to(section3Ref.current, { autoAlpha: 1, duration: 0.5 }, "blackout+=1");
+        const q3 = gsap.utils.selector(section3Ref.current);
+        tl.to(section3Ref.current, { autoAlpha: 1, duration: 0.1 }, "blackout+=1");
+        tl.to(q3(".story-line"), { opacity: 1, duration: 1, stagger: 1.5 }, "blackout+=1.1");
 
-        tl.to(section3Ref.current, { autoAlpha: 0, duration: 0.5 }, "blackout+=6");
+        tl.to(q3(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, "blackout+=6");
+        tl.to(section3Ref.current, { autoAlpha: 0, duration: 0.5 }, "blackout+=7.5");
+
 
         // === ACT 3.5: NEDUVAAI ACTIVATES (90% - 95%) ===
         tl.addLabel("activates", "blackout+=7");
 
-        tl.to(section35Ref.current, { autoAlpha: 1, duration: 0.5 }, "activates");
+        const q35 = gsap.utils.selector(section35Ref.current);
+        tl.to(section35Ref.current, { autoAlpha: 1, duration: 0.1 }, "activates");
+        tl.to(q35(".story-line"), { opacity: 1, duration: 1, stagger: 1 }, "activates+=0.1");
+
 
         // Boat turns Violet (Neon Brighter)
         tl.to(boatMat.color, { r: 0.835, g: 0.301, b: 1.0, duration: 0.5 }, "activates");
@@ -852,7 +870,9 @@ const App: React.FC = () => {
         // Fade Opacity back to 1
         tl.to([landMat, towerMat], { opacity: 1, duration: 2 }, "activates");
 
-        tl.to(section35Ref.current, { opacity: 0, duration: 0.5 }, "activates+=5");
+        tl.to(q35(".story-line"), { opacity: 0, duration: 1, stagger: 0.5 }, "activates+=5");
+        tl.to(section35Ref.current, { opacity: 0, duration: 0.5 }, "activates+=6.5");
+
 
         // === ACT 4: CONNECTION (95% - 100%) ===
         tl.addLabel("connection", "activates+=5");
@@ -1131,48 +1151,47 @@ const App: React.FC = () => {
                 </div>
 
                 {/* SECTION 1: DEPARTURE */}
-                <div ref={section1Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-24 md:pt-40 pointer-events-none">
+                <div ref={section1Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center max-w-2xl px-6">
                         <h2 className="text-4xl md:text-7xl font-bold tracking-tight text-white mb-6">Leaving the Shore</h2>
-                        <p className="text-lg md:text-3xl text-cyan-100/90 leading-relaxed font-light">
-                            The land slowly fades behind.
-                            Signal bars begin to disappear.
-                            Safety no longer feels close.
+                        <p className="text-lg md:text-3xl text-white leading-relaxed font-bold drop-shadow-md">
+                            <span className="story-line font-medium opacity-0 text-white block">Someone leaves for work today.</span>
+                            <span className="story-line font-medium opacity-0 text-white block">Their family waits behind.</span>
                         </p>
                     </div>
                 </div>
 
                 {/* SECTION 2: THE DEEP */}
-                <div ref={section2Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-24 md:pt-40 pointer-events-none">
+                <div ref={section2Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center max-w-2xl px-6">
                         <h2 className="text-4xl md:text-7xl font-bold text-white mb-6 drop-shadow-lg">The Silent Dark</h2>
-                        <p className="text-lg md:text-3xl text-red-200/90 leading-relaxed font-light">
-                            Miles into the open sea.
-                            No signal. No messages. No updates.
+                        <p className="text-lg md:text-3xl text-red-50 leading-relaxed font-bold drop-shadow-md">
+                            <span className="story-line font-medium opacity-0 text-white block">Beyond signal. Beyond visibility.</span>
+                            <span className="story-line font-medium opacity-0 text-white block">No one is watching.</span>
                         </p>
                     </div>
                 </div>
 
                 {/* SECTION 3: THE BLACKOUT */}
-                <div ref={section3Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-24 md:pt-40 pointer-events-none">
+                <div ref={section3Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center max-w-2xl px-6">
                         <h2 className="text-4xl md:text-7xl font-bold text-red-500 mb-6 animate-pulse">EMERGENCY</h2>
-                        <p className="text-lg md:text-3xl text-red-100/90 leading-relaxed font-light">
-                            The engine fails.
-                            The boat drifts with the waves.
-                            There is no service. No way to call.
+                        <p className="text-lg md:text-3xl text-red-50 leading-relaxed font-bold drop-shadow-md">
+                            <span className="story-line font-medium opacity-0 text-white block">The engine stops at sea.</span>
+                            <span className="story-line font-large opacity-0 text-red-500 block">What if help never finds?</span>
                         </p>
                     </div>
                 </div>
 
                 {/* SECTION 3.5: NEDUVAAI ACTIVATES */}
-                <div ref={section35Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-24 md:pt-40 pointer-events-none">
+                <div ref={section35Ref} className="story-section absolute inset-0 opacity-0 flex flex-col items-center justify-start pt-12 md:pt-20 pointer-events-none">
                     <div className="text-center">
                         <h2 className="text-4xl md:text-7xl font-bold text-white mb-2">
                             <span className="text-[#D54DFF]">NEDUVAAI</span><br />ONLINE
                         </h2>
-                        <p className="text-[#D54DFF]/60 font-mono text-xl tracking-widest uppercase mt-4">
-                            ESTABLISHING MESH LINK...
+                        <p className="text-[#D54DFF]/60 text-lg md:text-3xl text-red-50 leading-relaxed font-bold drop-shadow-md">
+                            <span className="story-line font-medium opacity-0 text-white block">Boats connect without satellites.</span>
+                            <span className="story-line font-medium opacity-0 text-white block">Communities protect their own.</span>
                         </p>
                     </div>
                 </div>
@@ -1182,18 +1201,26 @@ const App: React.FC = () => {
             {/* SECTION 4: CONNECTS (Static Footer Section below the scroll experience) */}
             <section ref={section4Ref} className="relative z-20 w-full min-h-screen bg-[#111116] flex items-center justify-center py-20">
                 <div className="text-center max-w-4xl px-6 bg-[#050505]/80 backdrop-blur-xl p-8 md:p-12 rounded-2xl border border-[#D54DFF]/30 shadow-[0_0_80px_rgba(213,77,255,0.15)] transform translate-y-12">
-                    <div className="flex items-center justify-center gap-4 mb-6">
-                        <div className="w-16 h-1 bg-gradient-to-r from-transparent via-[#D54DFF] to-transparent"></div>
+                    
+                    {/* BRANDING REVEAL */}
+                     <div className="flex flex-col items-center justify-center m-1">
+                        <img
+                            src="/icon.png"
+                            className="w-24 h-24 md:w-32 md:h-32 mb-6 mix-blend-screen"
+                            alt="Neduvaai Icon"
+                        />
+                        <h1 className="text-5xl md:text-8xl font-bold tracking-widest text-white">
+                            NEDUVAAI
+                        </h1>
                     </div>
-                    <h2 className="text-4xl md:text-6xl font-bold text-white mb-6">
-                        <span className="text-[#D54DFF]">Neduvaai</span> Connects.
+                    <h2 className="text-3xl md:text-4xl font-light text-zinc-300 mb-6 uppercase tracking-widest">
+                        Connects.
                     </h2>
-                    <p className="text-zinc-400 mb-8 max-w-2xl mx-auto text-lg">
-                        Extending safety hundreds of kilometers offshore.<br />
-                        No fisherman is ever truly alone.
+                    <p className="text-xl mb-8 max-w-2xl mx-auto text-[#D54DFF]">
+                        Safety should not be a privilege.
                     </p>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left mb-10">
+                    {/* <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left mb-10">
                         <div className="p-4 bg-zinc-900/50 rounded border border-zinc-800">
                             <h3 className="text-[#D54DFF] font-mono text-xs mb-2 uppercase">Tech</h3>
                             <p className="text-sm text-zinc-300 font-semibold">LoRa Mesh Network</p>
@@ -1206,7 +1233,7 @@ const App: React.FC = () => {
                             <h3 className="text-[#D54DFF] font-mono text-xs mb-2 uppercase">Impact</h3>
                             <p className="text-sm text-zinc-300 font-semibold">100% Offline Tracking</p>
                         </div>
-                    </div>
+                    </div> */}
 
                     <div className="flex flex-col md:flex-row items-center justify-center gap-4">
                         <button className="w-full md:w-auto bg-[#D54DFF] hover:bg-[#c02ceb] text-white font-bold py-4 px-8 rounded-full transition-all hover:scale-105 hover:shadow-[0_0_30px_rgba(213,77,255,0.4)] flex items-center justify-center gap-2">
