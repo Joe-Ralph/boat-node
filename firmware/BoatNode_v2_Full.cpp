@@ -78,8 +78,6 @@ struct Pkt {
   uint16_t seq;
   int32_t lat1e7;
   int32_t lon1e7;
-  uint16_t spd_cms;
-  uint16_t hdg_cdeg;
   uint8_t batt_pc;
   uint8_t hops;
   uint16_t user_id;
@@ -107,8 +105,6 @@ struct BoatEntry {
   double lat;
   double lon;
   uint8_t battery;
-  uint16_t speed_cms;
-  uint16_t hdg_cdeg;
   uint32_t last_seen_ms;
 };
 
@@ -133,8 +129,6 @@ void updateNearbyCache(const Pkt* p) {
       b.lat = p->lat1e7 / 1e7;
       b.lon = p->lon1e7 / 1e7;
       b.battery = p->batt_pc;
-      b.speed_cms = p->spd_cms;
-      b.hdg_cdeg = p->hdg_cdeg;
       b.last_seen_ms = now;
       found = true;
       break;
@@ -157,8 +151,6 @@ void updateNearbyCache(const Pkt* p) {
     b.lat = p->lat1e7 / 1e7;
     b.lon = p->lon1e7 / 1e7;
     b.battery = p->batt_pc;
-    b.speed_cms = p->spd_cms;
-    b.hdg_cdeg = p->hdg_cdeg;
     b.last_seen_ms = now;
     nearbyBoats.push_back(b);
   }
