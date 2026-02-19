@@ -1,22 +1,21 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 
-import 'package:http/http.dart' as http;
-import 'package:wifi_iot/wifi_iot.dart';
-import 'package:wifi_scan/wifi_scan.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/boat.dart';
 import '../models/nearby_boat.dart';
-import 'dart:async';
 import 'package:boatnode/services/log_service.dart';
 import 'package:boatnode/services/auth_service.dart';
 import 'package:boatnode/utils/boat_utils.dart';
 
 class HardwareService {
-  static bool _useMockService = true; // Default to true for development
+  static bool _useMockService = false; // Default false to test BLE
+  static bool _simulateConnectionFailure = false;
   static int _mockBatteryLevel = 85;
   static Position? _mockPosition;
-  static bool _simulateConnectionFailure = false;
 
   static void setSimulateConnectionFailure(bool value) {
     _simulateConnectionFailure = value;
@@ -47,19 +46,27 @@ class HardwareService {
     _mockPosition = null;
   }
 
+  // UUIDs
+  static const String _serviceUuid = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+  static const String _dataCharUuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+  static const String _cmdCharUuid = "8246d623-6447-4ec6-8c46-d2432924151a";
+
+  static BluetoothDevice? _connectedDevice;
+  static BluetoothCharacteristic? _dataChar;
+  static BluetoothCharacteristic? _cmdChar;
+  static StreamSubscription? _dataSubscription;
+
   static void setUseMockService(bool value) {
     _useMockService = value;
   }
 
   static bool get isMockService => _useMockService;
-
-  static const String _baseUrl = "http://192.168.4.1";
+  static bool get isConnected => _connectedDevice != null;
 
   static Future<bool> checkInternetConnection() async {
-    if (_useMockService) {
-      // Mock internet connection (randomly fail sometimes if we wanted, but let's say true for now)
-      return true;
-    }
+    // BLE doesn't provide internet.
+    // This check is for the Phone's 4G/WiFi connection to the backend.
+    if (_useMockService) return true;
     try {
       return await InternetConnectionChecker().hasConnection;
     } catch (e) {
@@ -68,52 +75,214 @@ class HardwareService {
     }
   }
 
-  static Future<int> getBatteryLevel() async {
-    if (_useMockService) {
-      return _mockBatteryLevel;
+  // --- BLE Methods ---
+
+  static final StreamController<List<ScanResult>> _scanResultsController =
+      StreamController<List<ScanResult>>.broadcast();
+
+  static Stream<List<ScanResult>> get scanResults =>
+      _scanResultsController.stream;
+
+  static StreamSubscription? _flutterBlueScanSubscription;
+
+  static Future<void> startScan() async {
+    if (_useMockService) return;
+
+    // 1. Get already connected devices (from System)
+    List<BluetoothDevice> systemDevices = [];
+    try {
+      systemDevices = await FlutterBluePlus.systemDevices([Guid(_serviceUuid)]);
+    } catch (e) {
+      LogService.w("Could not get system devices: $e");
     }
-    // TODO: Implement real battery level check using battery_plus package
-    // For now, return a default value or mock
-    return 100;
+
+    // Convert to ScanResults so UI can use them directly
+    List<ScanResult> connectedResults = systemDevices.map((d) {
+      return ScanResult(
+        device: d,
+        advertisementData: AdvertisementData(
+          advName: d.platformName,
+          txPowerLevel: null,
+          connectable: true,
+          manufacturerData: {},
+          serviceUuids: [],
+          serviceData: {},
+          appearance: null,
+        ),
+        rssi: 0,
+        timeStamp: DateTime.now(),
+      );
+    }).toList();
+
+    // Emit initial list
+    _scanResultsController.add(connectedResults);
+
+    // 2. Start Scanning
+    try {
+      await FlutterBluePlus.startScan(
+        withServices: [Guid(_serviceUuid)],
+        timeout: const Duration(seconds: 15),
+      );
+
+      // 3. Merge streams
+      _flutterBlueScanSubscription?.cancel();
+      _flutterBlueScanSubscription = FlutterBluePlus.scanResults.listen(
+        (scannedResults) {
+          // Merge connectedResults and scannedResults
+          // Avoid duplicates based on remoteId
+          final Set<String> existingIds = connectedResults
+              .map((r) => r.device.remoteId.toString())
+              .toSet();
+
+          final List<ScanResult> merged = List.from(connectedResults);
+          for (var r in scannedResults) {
+            if (!existingIds.contains(r.device.remoteId.toString())) {
+              merged.add(r);
+            }
+          }
+          _scanResultsController.add(merged);
+        },
+        onError: (e) {
+          LogService.e("Scan stream error", e);
+        },
+      );
+    } catch (e) {
+      LogService.e("Start scan error", e);
+    }
   }
 
-  static Future<Position?> getCurrentLocation() async {
-    if (_useMockService && _mockPosition != null) return _mockPosition;
+  static Future<void> stopScan() async {
+    if (_useMockService) return;
+    await _flutterBlueScanSubscription?.cancel();
+    _flutterBlueScanSubscription = null;
+    await FlutterBluePlus.stopScan();
+  }
 
-    bool serviceEnabled;
-    LocationPermission permission;
+  static final StreamController<bool> _connectionStateController =
+      StreamController<bool>.broadcast();
 
-    // Test if location services are enabled.
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      // Location services are not enabled don't continue
-      // accessing the position and request users of the
-      // App to enable the location services.
-      return null;
+  static Stream<bool> get connectionState => _connectionStateController.stream;
+
+  // Track device subscription to handle accidental disconnects
+  static StreamSubscription<BluetoothConnectionState>? _deviceStateSubscription;
+
+  static Future<void> connectToDevice(BluetoothDevice device) async {
+    if (_useMockService) {
+      _connectedDevice = device; // Mock
+      _connectionStateController.add(true);
+      return;
     }
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        // Permissions are denied, next time you could try
-        // requesting permissions again (this is also where
-        // Android's shouldShowRequestPermissionRationale
-        // returned true. According to Android guidelines
-        // your App should show an explanatory UI now.
-        return null;
+    // Stop scanning before connecting to ensure clean state
+    await stopScan();
+    // Android often needs a breather between scan stop and connect to avoid GATT 133
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    int retries = 3;
+    while (retries > 0) {
+      try {
+        await device.connect(autoConnect: false);
+        break; // Connected successfully
+      } catch (e) {
+        retries--;
+        LogService.w("Connection failed, retrying... ($retries attempts left)");
+        await device.disconnect(); // Ensure clean slate
+        await Future.delayed(const Duration(seconds: 1)); // Wait before retry
+        if (retries == 0) {
+          _connectedDevice = null;
+          _connectionStateController.add(false);
+          rethrow;
+        }
       }
     }
 
-    if (permission == LocationPermission.deniedForever) {
-      // Permissions are denied forever, handle appropriately.
-      return null;
-    }
+    _connectedDevice = device;
+    _connectionStateController.add(true);
 
-    // When we reach here, permissions are granted and we can
-    // continue accessing the position of the device.
-    return await Geolocator.getCurrentPosition();
+    // Listen for disconnects
+    _deviceStateSubscription?.cancel();
+    _deviceStateSubscription = device.connectionState.listen((state) {
+      if (state == BluetoothConnectionState.disconnected) {
+        LogService.i("Device Disconnected Unexpectedly");
+        _connectedDevice = null;
+        _connectionStateController.add(false);
+        _deviceStateSubscription?.cancel();
+      }
+    });
+
+    try {
+      // Discover Services
+      List<BluetoothService> services = await device.discoverServices();
+      for (var service in services) {
+        if (service.uuid.toString() == _serviceUuid) {
+          for (var characteristic in service.characteristics) {
+            if (characteristic.uuid.toString() == _dataCharUuid) {
+              _dataChar = characteristic;
+              // Subscribe to notifications
+              await _dataChar!.setNotifyValue(true);
+              _dataSubscription = _dataChar!.onValueReceived.listen(
+                _onDataReceived,
+              );
+            } else if (characteristic.uuid.toString() == _cmdCharUuid) {
+              _cmdChar = characteristic;
+            }
+          }
+        }
+      }
+      LogService.i("Connected to BLE Device: ${device.platformName}");
+    } catch (e) {
+      LogService.e("Error discovering services", e);
+      await device.disconnect();
+      _connectedDevice = null;
+      _connectionStateController.add(false);
+      rethrow;
+    }
   }
+
+  static Future<void> disconnect() async {
+    if (_connectedDevice != null) {
+      await _dataSubscription?.cancel();
+      await _deviceStateSubscription?.cancel(); // Stop listening to state
+      await _connectedDevice!.disconnect();
+      _connectedDevice = null;
+      _dataChar = null;
+      _cmdChar = null;
+      _connectionStateController.add(false);
+    }
+  }
+
+  static final StreamController<String> _loraStatusController =
+      StreamController<String>.broadcast();
+  static Stream<String> get loraStatus => _loraStatusController.stream;
+
+  static Map<String, dynamic> _lastBleData = {};
+
+  static void _onDataReceived(List<int> value) {
+    String data = utf8.decode(value);
+    LogService.d("BLE Data Received: $data");
+
+    try {
+      // Expected Format: S:4,Lat:13.0,Lon:80.2,Bat:95,St:Joined
+      List<String> parts = data.split(',');
+      for (var part in parts) {
+        var kv = part.split(':');
+        if (kv.length == 2) {
+          String key = kv[0].trim();
+          String val = kv[1].trim();
+          _lastBleData[key] = val;
+
+          // Check for Status Update
+          if (key == 'St') {
+            _loraStatusController.add(val);
+          }
+        }
+      }
+    } catch (e) {
+      LogService.e("Error parsing BLE data", e);
+    }
+  }
+
+  // --- Boat Data Methods ---
 
   static Future<Boat> getBoatStatus(String id) async {
     if (_simulateConnectionFailure) {
@@ -122,323 +291,158 @@ class HardwareService {
         id: id,
         name: "Connection Failed",
         batteryLevel: 0,
-        connection: {'wifi': false, 'lora': false, 'mesh': 0},
+        connection: {'ble': false, 'lora': false},
         lastFix: {},
         gpsStatus: "UNKNOWN",
       );
     }
 
     if (_useMockService) {
+      // Return Mock Data
       await Future.delayed(const Duration(milliseconds: 800));
-      // Fetch current user for dynamic naming
       final user = await AuthService.getCurrentUser();
       final boatName = BoatUtils.getDynamicBoatName(user?.displayName);
-
       return Boat(
         id: id,
         name: boatName,
         batteryLevel: _mockBatteryLevel,
-        connection: {'wifi': true, 'lora': false, 'mesh': 3},
+        connection: {'ble': true, 'lora': false, 'mesh': 3},
         lastFix: _mockPosition != null
             ? {'lat': _mockPosition!.latitude, 'lng': _mockPosition!.longitude}
             : {'lat': 13.0827, 'lng': 80.2707},
         gpsStatus: "LOCKED",
       );
-    } else {
-      try {
-        final response = await http
-            .get(Uri.parse('$_baseUrl/status'))
-            .timeout(const Duration(seconds: 5));
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          return Boat(
-            id: data['id'] ?? id,
-            name: data['name'] ?? "Unknown Boat",
-            batteryLevel: data['battery'] ?? 0,
-            connection: data['connection'] ?? {},
-            lastFix: data['lastFix'] ?? {},
-            gpsStatus: data['gpsStatus'] ?? "UNKNOWN",
-          );
-        }
-      } catch (e) {
-        LogService.e("Error getting boat status", e);
-      }
-      // Return a default/error boat if failed
+    }
+
+    // Real BLE: We rely on the last notified data.
+    // Since this method is usually polled or called once,
+    // we should return the latest cached state from BLE notifications.
+    // For this simple migration, let's assume we aren't fully parsing yet
+    // or return a placeholder if not connected.
+
+    if (_connectedDevice == null) {
       return Boat(
         id: id,
-        name: "Connection Failed",
+        name: "Not Connected",
         batteryLevel: 0,
-        connection: {'wifi': false, 'lora': false, 'mesh': 0},
+        connection: {'ble': false},
         lastFix: {},
-        gpsStatus: "UNKNOWN",
+        gpsStatus: "DISCONNECTED",
       );
     }
+
+    // Parse cached BLE data
+    double lat = double.tryParse(_lastBleData['Lat'] ?? '0') ?? 0.0;
+    double lon = double.tryParse(_lastBleData['Lon'] ?? '0') ?? 0.0;
+    int bat = int.tryParse(_lastBleData['Bat'] ?? '0') ?? 0;
+    String loraStatus = _lastBleData['St'] ?? "Unknown";
+    int sats = int.tryParse(_lastBleData['S'] ?? '0') ?? 0;
+    String gpsStatus = (lat != 0 && lon != 0)
+        ? "LOCKED ($sats)"
+        : "SEARCHING ($sats)";
+
+    return Boat(
+      id: id,
+      name: _connectedDevice!.platformName,
+      batteryLevel: bat,
+      connection: {
+        'ble': true,
+        'lora':
+            loraStatus.toLowerCase().contains("joined") ||
+            loraStatus.toLowerCase().contains("ready"),
+      },
+      lastFix: {'lat': lat, 'lng': lon},
+      gpsStatus: gpsStatus,
+    );
   }
 
-  static Future<List<NearbyBoat>> scanMesh() async {
-    if (_useMockService) {
-      await Future.delayed(const Duration(milliseconds: 2000));
-
-      // Mock response from GET /nearby
-      final mockResponse = {
-        "boats": [
-          {
-            "boat_id": "101",
-            "user_id": 55,
-            "display_name": "Kumar",
-            "lat": 13.0850,
-            "lon": 80.2700,
-            "age_sec": 15,
-            "battery": 85,
-            "speed_cms": 0,
-            "heading_cdeg": 0,
-          },
-          {
-            "boat_id": "102",
-            "user_id": 0,
-            "display_name": "Joe",
-            "lat": 13.0800,
-            "lon": 80.2750,
-            "age_sec": 120,
-            "battery": 60,
-            "speed_cms": 150,
-            "heading_cdeg": 18000,
-          },
-        ],
-      };
-      // Mock current location (Chennai)
-      final myLat = 13.0827;
-      final myLon = 80.2707;
-
-      final List<dynamic> boatsJson = mockResponse['boats'] as List;
-      return boatsJson
-          .map((json) => NearbyBoat.fromJson(json, myLat, myLon))
-          .toList();
-    } else {
-      try {
-        final response = await http
-            .get(Uri.parse('$_baseUrl/nearby'))
-            .timeout(const Duration(seconds: 10));
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          final List<dynamic> boatsJson = data['boats'] as List;
-          // For real implementation, we need real current location.
-          // For now, hardcoding Chennai as per mock to keep it simple or we need LocationService.
-          // Let's use the same hardcoded location for consistency.
-          final myLat = 13.0827;
-          final myLon = 80.2707;
-          return boatsJson
-              .map((json) => NearbyBoat.fromJson(json, myLat, myLon))
-              .toList();
-        }
-      } catch (e) {
-        LogService.e("Error scanning mesh", e);
-      }
-      return [];
-    }
-  }
-
-  // --- Pairing Flow Mocks ---
-
-  static Future<String> getBoatId() async {
-    // This is usually a backend call, so we keep it mock/simulated for now even in "Real" mode
-    // unless there is a specific backend endpoint.
-    await Future.delayed(const Duration(milliseconds: 500));
-    return "1234";
-  }
-
-  static Future<List<String>> scanForPairingDevices() async {
-    if (_useMockService) {
-      await Future.delayed(const Duration(seconds: 2));
-      return ["BOAT-PAIR-1234", "BOAT-PAIR-5678"];
-    } else {
-      try {
-        // 1. Check Location Service
-        final canScan = await WiFiScan.instance.canStartScan();
-        if (canScan == CanStartScan.noLocationServiceDisabled) {
-          throw Exception("Location Service is disabled");
-        } else if (canScan == CanStartScan.noLocationPermissionDenied ||
-            canScan == CanStartScan.noLocationPermissionUpgradeAccuracy) {
-          throw Exception("Location Permission denied");
-        }
-
-        // 2. Check WiFi
-        bool isEnabled = await WiFiForIoTPlugin.isEnabled();
-        if (!isEnabled) {
-          await WiFiForIoTPlugin.setEnabled(true);
-          isEnabled = await WiFiForIoTPlugin.isEnabled();
-          if (!isEnabled) {
-            throw Exception("WiFi is disabled");
-          }
-        }
-
-        // 3. Start Scan
-        final canScanFinal = await WiFiScan.instance.canStartScan();
-        if (canScanFinal == CanStartScan.yes) {
-          await WiFiScan.instance.startScan();
-        }
-
-        // Get scanned results
-        final List<WiFiAccessPoint> networks = await WiFiScan.instance
-            .getScannedResults();
-
-        // Filter for BOAT-PAIR- prefix
-        return networks
-            .where((network) => network.ssid.startsWith("BOAT-PAIR-"))
-            .map((network) => network.ssid)
-            .toList();
-      } catch (e) {
-        if (e.toString().contains("Location Service") ||
-            e.toString().contains("Location Permission") ||
-            e.toString().contains("WiFi is disabled")) {
-          rethrow;
-        }
-        LogService.e("Error scanning for devices", e);
-        return [];
-      }
-    }
-  }
-
-  static Future<void> connectToDeviceWifi(String password) async {
-    if (_useMockService) {
-      await Future.delayed(const Duration(seconds: 2));
-      LogService.d("Connected to device WiFi with password: $password");
-    } else {
-      try {
-        // We need to find the SSID again or pass it.
-        // For simplicity, we'll scan and find the first matching one.
-        // Using wifi_scan for scanning
-        final canScan = await WiFiScan.instance.canStartScan();
-        if (canScan == CanStartScan.yes) {
-          await WiFiScan.instance.startScan();
-        }
-        final List<WiFiAccessPoint> networks = await WiFiScan.instance
-            .getScannedResults();
-
-        WiFiAccessPoint? targetNetwork;
-        try {
-          targetNetwork = networks.firstWhere(
-            (network) => network.ssid.startsWith("BOAT-PAIR-"),
-          );
-        } catch (e) {
-          // Not found
-          targetNetwork = null;
-        }
-
-        if (targetNetwork != null && targetNetwork.ssid.isNotEmpty) {
-          await WiFiForIoTPlugin.connect(
-            targetNetwork.ssid,
-            password: password,
-            security: NetworkSecurity.WPA,
-            joinOnce: true,
-          );
-
-          // Force traffic to go through WiFi since it has no internet
-          await WiFiForIoTPlugin.forceWifiUsage(true);
-
-          LogService.i("Connected to ${targetNetwork.ssid}");
-          // Wait a bit for connection to stabilize
-          await Future.delayed(const Duration(seconds: 3));
-        } else {
-          LogService.w("Target network not found for connection");
-        }
-      } catch (e) {
-        LogService.e("Error connecting to WiFi", e);
-      }
-    }
-  }
+  // --- Pairing Methods ---
 
   static Future<bool> pairDevice({
     required String boatId,
     required int userId,
     required String displayName,
-    required String deviceId, // Added deviceId
   }) async {
     if (_useMockService) {
       await Future.delayed(const Duration(seconds: 1));
-      LogService.i(
-        "Pairing request sent: boat_id=$boatId, user_id=$userId, name=$displayName, device_id=$deviceId",
-      );
       return true;
-    } else {
-      try {
-        // 1. Get device password from backend
-        // In real flow, we might need to authenticate with backend first
-        // For now, we assume we have access or the deviceId is enough
-        // Note: The prompt says "get the device wifi password from the backend and use it to connect"
-        // But we are already connected to the device AP to send this request?
-        // Ah, the prompt says: "While pairing based on the device id, get the device wifi password from the backend and use it to connect with the password."
-        // This implies we connect to the device AP using a password fetched from backend.
-        // But `connectToDeviceWifi` was called BEFORE `pairDevice` in the previous flow.
-        // We should probably move the connection logic here or pass the password out.
-        // However, `pairDevice` sends the configuration TO the device.
-
-        // Let's assume we are already connected to the device AP (open or known password)
-        // OR we are sending this to the backend to associate?
-        // "Once registered successfully, make a call to the backend which will associate the device id with the boat Id."
-
-        // Revised Flow:
-        // 1. Connect to Device AP (using password from backend? or is it open?)
-        //    If AP is protected, we need password first.
-        //    "get the device wifi password from the backend and use it to connect" -> implies we need it before connecting.
-
-        // So `pairDevice` here seems to be the step where we configure the device via HTTP.
-
-        final response = await http
-            .post(
-              Uri.parse('$_baseUrl/pair'),
-              body: {
-                'boat_id': boatId,
-                'user_id': userId.toString(),
-                'name': displayName,
-                'owner_id': userId.toString(), // Add owner info to EEPROM
-              },
-            )
-            .timeout(const Duration(seconds: 5));
-
-        if (response.statusCode == 200) {
-          // 2. Associate in Backend
-          // We should call BackendService here or in the UI.
-          // Service layer is better.
-          // But BackendService is mock.
-          // Let's assume we call it here.
-          // await BackendService.associateDeviceWithBoat(deviceId, boatId);
-          return true;
-        }
-        return false;
-      } catch (e) {
-        LogService.e("Error pairing device", e);
-        return false;
-      }
     }
-  }
 
-  static Future<void> notifyPairingSuccess() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    LogService.i("Notified device of pairing success");
+    if (_cmdChar == null) {
+      LogService.e("Command Characteristic not found");
+      return false;
+    }
+
+    try {
+      // Format: SET:boat_id:user_id:name
+      String cmd = "SET:$boatId:$userId:$displayName";
+      await _cmdChar!.write(utf8.encode(cmd));
+      LogService.i("Sent Configuration: $cmd");
+      return true;
+    } catch (e) {
+      LogService.e("Error writing to config char", e);
+      return false;
+    }
   }
 
   static Future<void> unpairDevice() async {
-    if (_useMockService) {
-      await Future.delayed(const Duration(seconds: 1));
-      LogService.i("Device reset request sent");
-    } else {
-      try {
-        final response = await http
-            .post(Uri.parse('$_baseUrl/reset'))
-            .timeout(const Duration(seconds: 5));
-        // Reset wifi usage first to allow routing to recover
-        await WiFiForIoTPlugin.forceWifiUsage(false);
+    await disconnect();
+    LogService.i("Device Unpaired");
+  }
 
-        // Explicitly disconnect from the Boat WiFi
-        await WiFiForIoTPlugin.disconnect();
-        LogService.i("Disconnected from Boat WiFi");
-      } catch (e) {
-        // Even if request fails, we should probably reset wifi usage if we are done
-        await WiFiForIoTPlugin.forceWifiUsage(false);
-        await WiFiForIoTPlugin.disconnect();
-        LogService.e("Error unpairing device", e);
-      }
+  static Future<void> notifyPairingSuccess() async {
+    // Optional: Send a command to BLE to flash LED or purely UI feedback
+    LogService.i("Pairing Success Notification");
+    // If we had a specific command:
+    // await _cmdChar?.write(utf8.encode("PAIR_SUCCESS"));
+  }
+
+  static Future<bool> startJourney() async {
+    if (_useMockService) {
+      LogService.i("Mock Journey Started");
+      return true;
     }
+    if (_cmdChar == null) return false;
+    try {
+      await _cmdChar!.write(utf8.encode("START_JOURNEY"));
+      LogService.i("Sent START_JOURNEY");
+      return true;
+    } catch (e) {
+      LogService.e("Error sending START_JOURNEY", e);
+      return false;
+    }
+  }
+
+  static Future<bool> endJourney() async {
+    if (_useMockService) {
+      LogService.i("Mock Journey Ended");
+      return true;
+    }
+    if (_cmdChar == null) return false;
+    try {
+      await _cmdChar!.write(utf8.encode("END_JOURNEY"));
+      LogService.i("Sent END_JOURNEY");
+      return true;
+    } catch (e) {
+      LogService.e("Error sending END_JOURNEY", e);
+      return false;
+    }
+  }
+
+  // --- Scan for Nearby Boats (Mesh) ---
+  static Future<List<NearbyBoat>> scanMesh() async {
+    // This would come from BLE notifications interpreted as Mesh Packets
+    // For now, return empty or mock if requested.
+    if (_useMockService) {
+      // ... (Keep existing mock logic if needed or simplify)
+      return [];
+    }
+    return [];
+  }
+
+  // --- Helpers ---
+
+  static Future<Position?> getCurrentLocation() async {
+    return await Geolocator.getCurrentPosition();
   }
 }

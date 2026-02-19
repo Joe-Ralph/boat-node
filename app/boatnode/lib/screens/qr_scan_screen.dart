@@ -14,7 +14,9 @@ class QRScanScreen extends StatefulWidget {
 }
 
 class _QRScanScreenState extends State<QRScanScreen> {
-  final MobileScannerController _controller = MobileScannerController();
+  final MobileScannerController _controller = MobileScannerController(
+    formats: [BarcodeFormat.qrCode],
+  );
   bool _isProcessing = false;
 
   @override

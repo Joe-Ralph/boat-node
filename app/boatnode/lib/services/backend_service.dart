@@ -260,4 +260,41 @@ class BackendService {
       rethrow; // Pass error to UI
     }
   }
+  // --- SOS & Profile Helpers ---
+
+  static Future<Map<String, dynamic>?> getPublicProfile(String userId) async {
+    try {
+      final response = await Supabase.instance.client
+          .from('profiles')
+          .select('display_name, avatar_url, role')
+          .eq('id', userId)
+          .maybeSingle(); // Use maybeSingle to avoid exception if not found
+      return response;
+    } catch (e) {
+      LogService.e("BackendService: Error fetching profile for $userId", e);
+      return null;
+    }
+  }
+
+  static Future<int> getSosBroadcastCount(String senderId) async {
+    try {
+      // Create a temporary simplified query to count recipients of recent SOS from this sender
+      // This assumes we want to know how many people *this specific* SOS (or recent ones) went to.
+      // Ideally we'd filter by a specific SOS ID if available, but for now let's count all pending/recent.
+      // Or better: The prompt asks "how many devices are the request's made".
+      // This implies counting rows in sos_signals where sender_id = X and created_at is recent.
+
+      final response = await Supabase.instance.client
+          .from('sos_signals')
+          .select('id')
+          .eq('sender_id', senderId)
+          .eq('status', 'pending'); // Count active/pending signals
+      // .gt('created_at', DateTime.now().subtract(Duration(minutes: 30)).toIso8601String());
+
+      return (response as List).length;
+    } catch (e) {
+      LogService.e("BackendService: Error counting SOS broadcast", e);
+      return 0;
+    }
+  }
 }

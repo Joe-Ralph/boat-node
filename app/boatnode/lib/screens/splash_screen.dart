@@ -5,6 +5,7 @@ import '../services/session_service.dart';
 import '../services/auth_service.dart';
 import '../services/background_service.dart';
 import '../utils/ui_utils.dart';
+import '../constants.dart';
 import 'login_screen.dart';
 import 'dashboard_screen.dart';
 import 'profile_screen.dart';
@@ -40,14 +41,8 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // 2. Initialize Supabase
     try {
-      const supabaseUrl = String.fromEnvironment(
-        'SUPABASE_URL',
-        defaultValue: 'https://ltlftxaskaebqwptcbdq.supabase.co',
-      );
-      const supabaseAnonKey = String.fromEnvironment(
-        'SUPABASE_ANON_KEY',
-        defaultValue: 'sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz',
-      );
+      const supabaseUrl = Constants.supabaseUrl;
+      const supabaseAnonKey = Constants.supabaseAnonKey;
 
       if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
         await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);

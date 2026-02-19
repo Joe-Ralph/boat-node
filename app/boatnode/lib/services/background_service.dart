@@ -5,6 +5,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:boatnode/services/log_service.dart';
+import 'package:boatnode/constants.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -42,7 +43,7 @@ class BackgroundService {
         onStart: onStart,
 
         // auto start service
-        autoStart: false,
+        autoStart: true,
         isForegroundMode: true,
 
         notificationChannelId: 'my_foreground',
@@ -52,7 +53,7 @@ class BackgroundService {
       ),
       iosConfiguration: IosConfiguration(
         // auto start service
-        autoStart: false,
+        autoStart: true,
 
         // this will be executed when app is in foreground in separated isolate
         onForeground: onStart,
@@ -74,27 +75,20 @@ class BackgroundService {
   static void onStart(ServiceInstance service) async {
     // Only available for flutter 3.0.0 and later
     DartPluginRegistrant.ensureInitialized();
-
-    // Initialize Supabase in the isolate
     try {
-      const supabaseUrl = String.fromEnvironment(
-        'SUPABASE_URL',
-        defaultValue: 'https://dummy.supabase.co',
-      );
-      const supabaseAnonKey = String.fromEnvironment(
-        'SUPABASE_ANON_KEY',
-        defaultValue: 'dummy-key',
-      );
+      // Hardcoded values to ensure isolate has access
+      const supabaseUrl = 'https://ltlftxaskaebqwptcbdq.supabase.co';
+      const supabaseAnonKey = 'sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz';
 
       if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
         await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
-        LogService.i("Background Service: Supabase initialized");
+        LogService.i("Background Service v2: Supabase initialized");
       } else {
-        LogService.e("Background Service: Supabase keys missing in env.");
+        LogService.e("Background Service v2: Supabase keys missing.");
       }
     } catch (e) {
       LogService.e(
-        "Background Service: Supabase init error (might be already init)",
+        "Background Service v2: Supabase init error (might be already init)",
         e,
       );
     }
@@ -113,8 +107,15 @@ class BackgroundService {
       service.stopSelf();
     });
 
+    service.on('updateJourneyState').listen((event) async {
+      LogService.i("Background Service v2: Refreshing Journey State...");
+    });
+
     // Flag to track if we are already listening
     bool isListeningToSos = false;
+    bool hasLoggedMissingUser = false;
+    // Track notified signal IDs to prevent duplicate calls
+    final Set<String> notifiedSignalIds = {};
 
     // --- SOS LISTENER SETUP FUNCTION ---
     Future<void> setupSosListener() async {
@@ -125,34 +126,93 @@ class BackgroundService {
         if (userId != null && !isListeningToSos) {
           final supabase = Supabase.instance.client;
           LogService.i(
-            "Background Service: Setting up SOS listener for user $userId",
+            "Background Service v2: Setting up SOS listener for user $userId",
           );
 
-          supabase
-              .from('sos_signals')
-              .stream(primaryKey: ['id'])
-              .eq('receiver_id', userId)
-              .listen((List<Map<String, dynamic>> data) {
-                // Log the raw data count for debug
-                LogService.i(
-                  "Background Service: Recieved ${data.length} sos signals",
-                );
-                for (final signal in data) {
-                  if (signal['status'] == 'pending') {
-                    LogService.i(
-                      "Background Service: PENDING SOS detected! ID: ${signal['id']}",
+          if (isListeningToSos) return; // Double check
+
+          supabase.from('sos_signals').stream(primaryKey: ['id']).eq('receiver_id', userId).listen((
+            List<Map<String, dynamic>> data,
+          ) async {
+            LogService.i(
+              "Background Service v2: Stream Activity. Count: ${data.length}",
+            );
+
+            for (final signal in data) {
+              final signalId = signal['id'];
+              final status = signal['status'];
+
+              // Cleanup resolved/cancelled signals from history
+              if (status != 'pending') {
+                if (notifiedSignalIds.contains(signalId)) {
+                  notifiedSignalIds.remove(signalId);
+                  LogService.d(
+                    "Background Service: Cleared notified ID $signalId",
+                  );
+                }
+                continue;
+              }
+
+              LogService.d(
+                "Background Service v2: Signal $signalId Status: $status",
+              );
+
+              if (status == 'pending' &&
+                  !notifiedSignalIds.contains(signalId)) {
+                // Check if signal is too old (e.g. created more than 60 mins ago)
+                // We use a lenient window to account for time skew between device and server
+                final createdAtStr = signal['created_at'] as String?;
+                if (createdAtStr != null) {
+                  try {
+                    final createdAt = DateTime.parse(createdAtStr).toUtc();
+                    final now = DateTime.now().toUtc();
+                    final diff = now.difference(createdAt);
+
+                    LogService.d(
+                      "Background Service: Signal Check - Now: $now, Created: $createdAt, Diff: ${diff.inMinutes}m",
                     );
-                    _showIncomingCall(signal);
+
+                    if (diff.inMinutes > 60) {
+                      LogService.i(
+                        "Background Service: Skipping old SOS (Age: ${diff.inMinutes}m) ID: $signalId",
+                      );
+                      // Mark as notified so we don't check again
+                      notifiedSignalIds.add(signalId);
+                      continue;
+                    }
+                  } catch (e) {
+                    LogService.e(
+                      "Background Service: Error parsing created_at",
+                      e,
+                    );
                   }
                 }
-              });
+
+                LogService.i(
+                  "Background Service v2: PENDING SOS detected! ID: $signalId",
+                );
+                notifiedSignalIds.add(signalId);
+                // Await to ensure we don't skip or overlap too fast
+                await _showIncomingCall(signal);
+              } else if (status == 'pending' &&
+                  notifiedSignalIds.contains(signalId)) {
+                LogService.d(
+                  "Background Service: Skipping duplicate alert for $signalId",
+                );
+              }
+            }
+          });
 
           isListeningToSos = true;
-          LogService.i("Background Service: SOS Listener Connected.");
+          hasLoggedMissingUser = false;
+          LogService.i("Background Service v2: SOS Listener Connected.");
         } else if (userId == null) {
-          LogService.d(
-            "Background Service: No user_id_cache found yet. Waiting...",
-          );
+          if (!hasLoggedMissingUser) {
+            LogService.d(
+              "Background Service v2: No user_id_cache found yet. Waiting...",
+            );
+            hasLoggedMissingUser = true;
+          }
         }
       } catch (e) {
         LogService.e("Background Service: Error setting up SOS listener", e);
@@ -172,21 +232,42 @@ class BackgroundService {
           await setupSosListener();
         }
 
-        // 2. Location Updates
-        final position = await Geolocator.getCurrentPosition();
         final prefsLoop = await SharedPreferences.getInstance();
+        final isJourneyActive = prefsLoop.getBool('is_journey_active') ?? false;
         final currentUserId = prefsLoop.getString('user_id_cache');
 
-        if (currentUserId != null) {
-          // Keep the notification updated
-          if (service is AndroidServiceInstance) {
-            String statusText = "SOS Monitoring Active";
-            if (!isListeningToSos) statusText += " (Not Connected)";
+        // 2. Location Updates (Only if Journey is Active)
+        if (isJourneyActive) {
+          final position = await Geolocator.getCurrentPosition();
 
+          if (currentUserId != null) {
+            // Keep the notification updated
+            if (service is AndroidServiceInstance) {
+              String statusText = "Journey Active: Tracking";
+              if (!isListeningToSos) statusText += " (SOS DC)";
+
+              service.setForegroundNotificationInfo(
+                title: "BoatNode Active",
+                content:
+                    "$statusText | Lat: ${position.latitude.toStringAsFixed(4)}",
+              );
+            }
+
+            final boatId = prefsLoop.getString('boat_id_cache');
+            // Upload to Backend if we have a valid position and user is logged in
+            if (boatId != null) {
+              // Future: Implement background upload logic here if needed.
+              LogService.d(
+                "Background Service: Have boatId, could upload location.",
+              );
+            }
+          }
+        } else {
+          // Journey NOT active
+          if (service is AndroidServiceInstance) {
             service.setForegroundNotificationInfo(
               title: "BoatNode Active",
-              content:
-                  "$statusText | Lat: ${position.latitude.toStringAsFixed(4)}",
+              content: "Monitoring SOS signals...",
             );
           }
         }
@@ -197,23 +278,36 @@ class BackgroundService {
   }
 
   static Future<void> _showIncomingCall(Map<String, dynamic> signal) async {
+    LogService.i(
+      "Background Service: Attempting to show CallKit for ${signal['id']}",
+    );
+
+    // Extract location from 'extra' jsonb column if it exists, or top level
+    Map<String, dynamic> extraData = {};
+    if (signal['extra'] != null) {
+      extraData = Map<String, dynamic>.from(signal['extra']);
+    } else {
+      // Fallback
+      extraData = {'lat': signal['lat'], 'long': signal['long']};
+    }
+
     final params = CallKitParams(
       id: signal['id'] ?? const Uuid().v4(),
       nameCaller: 'SOS ALERT',
       appName: 'BoatNode',
-      avatar: 'https://i. Pravatar.cc/300', // Placeholder
+      avatar: 'https://i.pravatar.cc/300', // Placeholder
       handle: 'Someone nearby needs help!',
       type: 0, // Audio Call
       duration: 30000,
       textAccept: 'View Location',
       textDecline: 'Ignore',
-      missedCallNotification: NotificationParams(
+      missedCallNotification: const NotificationParams(
         showNotification: true,
         isShowCallback: true,
         subtitle: 'Missed SOS Alert',
         callbackText: 'Call back',
       ),
-      extra: <String, dynamic>{'lat': signal['lat'], 'long': signal['long']},
+      extra: extraData, // Pass the correct extra data
       headers: <String, dynamic>{'apiKey': 'Abc@123!', 'platform': 'flutter'},
       android: const AndroidParams(
         isCustomNotification: true,
@@ -222,10 +316,12 @@ class BackgroundService {
         backgroundColor: '#D50000', // Red for SOS
         backgroundUrl: 'assets/test.png',
         actionColor: '#4CAF50',
+        incomingCallNotificationChannelName: "SOS Alerts",
+        missedCallNotificationChannelName: "Missed SOS",
       ),
       ios: const IOSParams(
         iconName: 'CallKitLogo',
-        handleType: '',
+        handleType: 'generic',
         supportsVideo: true,
         maximumCallGroups: 2,
         maximumCallsPerCallGroup: 1,
@@ -240,9 +336,11 @@ class BackgroundService {
         ringtonePath: 'system_ringtone_default',
       ),
     );
-    await FlutterCallkitIncoming.showCallkitIncoming(params);
-
-    // Listen for call events (Accept/Decline) happens in main app usually if UI is open,
-    // but here we just show it. Handling the tap needs to be done via EventListener in main.dart or here.
+    try {
+      await FlutterCallkitIncoming.showCallkitIncoming(params);
+      LogService.i("Background Service: CallKit show command sent.");
+    } catch (e) {
+      LogService.e("Background Service: Failed to show CallKit", e);
+    }
   }
 }

@@ -21,7 +21,10 @@ class CachedTileProvider extends TileProvider {
 }
 
 class NearbyScreen extends StatefulWidget {
-  const NearbyScreen({super.key});
+  final Map<dynamic, dynamic>? targetSignal; // SOS signal payload
+  final Position? initialPosition; // Initial map center (SOS location)
+
+  const NearbyScreen({super.key, this.targetSignal, this.initialPosition});
 
   @override
   State<NearbyScreen> createState() => _NearbyScreenState();
@@ -33,41 +36,211 @@ class _NearbyScreenState extends State<NearbyScreen> {
   Position? _currentPosition;
   final MapController _mapController = MapController();
 
+  // SOS Details
+  bool _isSosMode = false;
+  Map<String, dynamic>? _sosSenderProfile;
+  int _sosBroadcastCount = 0;
+
   @override
   void initState() {
     super.initState();
+    if (widget.targetSignal != null && widget.initialPosition != null) {
+      _isSosMode = true;
+      _currentPosition = widget.initialPosition;
+      _loadSosDetails();
+    }
     _scan();
+  }
+
+  Future<void> _loadSosDetails() async {
+    if (widget.targetSignal == null) return;
+    final senderId =
+        widget.targetSignal!['sender_id']; // Assuming sender_id is in payload
+    // If not in payload, we might need to fetch by signal ID, but let's assume it is or we query it.
+    // The previous analysis of schema says sender_id is in ios_signal table.
+    // The notification payload 'extra' might not have it unless we put it there.
+    // Let's assume the payload passed from DashboardScreen (which comes from CallKit/BackgroundService) contains it.
+    // BackgroundService.dart _showIncomingCall uses 'signal' map which comes from 'sos_signals' table.
+    // So 'signal' map HAS 'sender_id'.
+
+    if (senderId != null) {
+      final profile = await BackendService.getPublicProfile(senderId);
+      final count = await BackendService.getSosBroadcastCount(senderId);
+      if (mounted) {
+        setState(() {
+          _sosSenderProfile = profile;
+          _sosBroadcastCount = count;
+        });
+        _showSosBottomSheet();
+      }
+    }
+  }
+
+  void _showSosBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _buildSosSheet(),
+    );
+  }
+
+  Widget _buildSosSheet() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: const BoxDecoration(
+        color: kZinc900,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: kRed600.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.warning_amber_rounded,
+                  color: kRed600,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "SOS REQUEST",
+                      style: TextStyle(
+                        color: kRed600,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _sosSenderProfile?['display_name'] ?? "Unknown User",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 20,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _buildInfoRow(
+            Icons.campaign,
+            "Broadcasted to",
+            "$_sosBroadcastCount nearby devices",
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            Icons.location_on,
+            "Location",
+            "${_currentPosition?.latitude.toStringAsFixed(4)}, ${_currentPosition?.longitude.toStringAsFixed(4)}",
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            Icons.access_time,
+            "Time",
+            "Just now", // Could parse created_at if available
+          ),
+          const SizedBox(height: 32),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // Maybe navigate to navigation mode or something
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kRed600,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                "ACKNOWLEDGE & NAVIGATE",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: kZinc500, size: 20),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: kZinc500, fontSize: 12)),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Future<void> _scan() async {
     setState(() => _loading = true);
 
     // Determine source of "current location"
+    // Determine source of "current location"
     Position? position;
-    if (SessionService.isPaired) {
-      // If paired, use the boat's location
-      final boatStatus = await HardwareService.getBoatStatus(
-        '123',
-      ); // ID should ideally be dynamic
-      final lastFix = boatStatus.lastFix;
-      if (lastFix['lat'] != null && lastFix['lng'] != null) {
-        position = Position(
-          longitude: lastFix['lng'],
-          latitude: lastFix['lat'],
-          timestamp: DateTime.now(),
-          accuracy: 0,
-          altitude: 0,
-          heading: 0, // Boat heading could be added to Boat model if available
-          speed: 0,
-          speedAccuracy: 0,
-          altitudeAccuracy: 0,
-          headingAccuracy: 0,
-        );
-      }
-    }
 
-    // Fallback or if unpaired: use phone location
-    position ??= await HardwareService.getCurrentLocation();
+    // If in SOS Mode, we already have the target position in _currentPosition (set in initState)
+    // We should use that as the center.
+    if (_isSosMode && _currentPosition != null) {
+      position = _currentPosition;
+    } else {
+      if (SessionService.isPaired) {
+        // ... (existing logic)
+        final boatStatus = await HardwareService.getBoatStatus('123');
+        final lastFix = boatStatus.lastFix;
+        if (lastFix['lat'] != null && lastFix['lng'] != null) {
+          position = Position(
+            longitude: lastFix['lng'],
+            latitude: lastFix['lat'],
+            timestamp: DateTime.now(),
+            accuracy: 0,
+            altitude: 0,
+            heading: 0,
+            speed: 0,
+            speedAccuracy: 0,
+            altitudeAccuracy: 0,
+            headingAccuracy: 0,
+          );
+        }
+      }
+      // Fallback or if unpaired: use phone location
+      position ??= await HardwareService.getCurrentLocation();
+    }
 
     // Fetch boats based on mode
     List<NearbyBoat> boats = [];
@@ -230,7 +403,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
                           MarkerLayer(
                             markers: [
                               // Self Marker (Blue Arrow)
-                              if (_currentPosition != null)
+                              if (_currentPosition != null && !_isSosMode)
                                 Marker(
                                   point: LatLng(
                                     _currentPosition!.latitude,
@@ -248,6 +421,22 @@ class _NearbyScreenState extends State<NearbyScreen> {
                                       color: kBlue600,
                                       size: 32,
                                     ),
+                                  ),
+                                ),
+
+                              // SOS Target Marker
+                              if (_isSosMode && _currentPosition != null)
+                                Marker(
+                                  point: LatLng(
+                                    _currentPosition!.latitude,
+                                    _currentPosition!.longitude,
+                                  ),
+                                  width: 60,
+                                  height: 60,
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: kRed600,
+                                    size: 50,
                                   ),
                                 ),
 

@@ -25,7 +25,7 @@ create table public.profiles (
   id uuid references auth.users(id) on delete cascade primary key,
   email text,
   display_name text,
-  role text check (role in ('owner', 'crew', 'land_user', 'land_admin')),
+  role text check (role in ('owner', 'crew', 'land_user', 'land_admin', 'super_admin')),
   village_id uuid references public.villages(id),
   boat_id uuid references public.boats(id), -- Current active boat
   created_at timestamptz default now(),

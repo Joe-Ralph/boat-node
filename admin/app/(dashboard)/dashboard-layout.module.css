@@ -1,0 +1,17 @@
+.container {
+    display: flex;
+    min-height: 100vh;
+    background-color: #020617;
+    /* Deep ocean dark */
+}
+
+.main {
+    flex: 1;
+    margin-left: 280px;
+    /* Sidebar width */
+    min-height: 100vh;
+    position: relative;
+    background-image: url('/grid-bg.svg');
+    background-size: cover;
+    background-attachment: fixed;
+}

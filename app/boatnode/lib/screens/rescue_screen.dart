@@ -4,6 +4,7 @@ import 'package:slide_to_confirm/slide_to_confirm.dart';
 import '../theme/app_theme.dart';
 import '../l10n/app_localizations.dart';
 import 'package:boatnode/services/sos_service.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../utils/ui_utils.dart';
 
 // Add these to your localization files if not already present
@@ -55,12 +56,14 @@ class _RescueScreenState extends State<RescueScreen>
 
   @override
   void dispose() {
+    WakelockPlus.disable();
     _controller.dispose();
     super.dispose();
   }
 
   Future<void> _activateDistressSignal() async {
     setState(() => _isActive = true);
+    WakelockPlus.enable();
     final localizations = AppLocalizations.of(context)!;
     _addLog(localizations.translate('initiatingDistress'));
 
@@ -87,6 +90,7 @@ class _RescueScreenState extends State<RescueScreen>
       await SosService.cancelSos();
       if (mounted) {
         setState(() => _isActive = false);
+        WakelockPlus.disable();
         _addLog(AppLocalizations.of(context)!.translate('distressCancelled'));
       }
     } catch (e) {
@@ -113,220 +117,240 @@ class _RescueScreenState extends State<RescueScreen>
   Widget build(BuildContext context) {
     final sliderWidth = MediaQuery.of(context).size.width - 48;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          if (_isActive)
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Container(
-                    color: kRed600.withOpacity(_controller.value * 0.2),
-                  );
-                },
-              ),
-            ),
-          SafeArea(
-            child: Column(
-              children: [
-                Align(
-                  alignment: Alignment.topLeft,
-                  child: IconButton(
-                    onPressed: () {
-                      if (Navigator.canPop(context)) {
-                        Navigator.pop(context);
-                      }
-                    },
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  ),
+    return PopScope(
+      canPop: !_isActive,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        if (_isActive) {
+          UiUtils.showSnackBar(
+            context,
+            "Cannot exit while SOS is active. Please Cancel SOS first.",
+            isError: true,
+          );
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            if (_isActive)
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, child) {
+                    return Container(
+                      color: kRed600.withOpacity(_controller.value * 0.2),
+                    );
+                  },
                 ),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Center(
-                          child: _isActive
-                              ? Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    // Active state
-                                    AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 300,
-                                      ),
-                                      width: 200,
-                                      height: 200,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: kRed600,
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: kRed600.withOpacity(0.5),
-                                            blurRadius: 50,
-                                            spreadRadius: 10,
-                                          ),
-                                        ],
-                                        border: Border.all(
-                                          color: kRed900,
-                                          width: 8,
+              ),
+            SafeArea(
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: IconButton(
+                      onPressed: () {
+                        if (Navigator.canPop(context)) {
+                          Navigator.pop(context);
+                        }
+                      },
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Center(
+                            child: _isActive
+                                ? Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      // Active state
+                                      AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 300,
                                         ),
-                                      ),
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          const Icon(
-                                            Icons.emergency,
-                                            size: 64,
-                                            color: Colors.white,
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Text(
-                                            AppLocalizations.of(context)!
-                                                .translate('sosActive')
-                                                .toUpperCase(),
-                                            style: const TextStyle(
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.w900,
-                                              color: Colors.white,
+                                        width: 200,
+                                        height: 200,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: kRed600,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: kRed600.withOpacity(0.5),
+                                              blurRadius: 50,
+                                              spreadRadius: 10,
                                             ),
-                                            textAlign: TextAlign.center,
+                                          ],
+                                          border: Border.all(
+                                            color: kRed900,
+                                            width: 8,
                                           ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 24),
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 20),
-                                      child: ConfirmationSlider(
-                                        width: sliderWidth,
-                                        height: 70,
-                                        backgroundColor: kZinc900,
-                                        foregroundColor: kRed500,
-                                        text: AppLocalizations.of(
-                                          context,
-                                        )!.translate('cancelSOS'),
-                                        textStyle: const TextStyle(
-                                          color: kRed500,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.5,
                                         ),
-                                        onConfirmation: _cancelDistressSignal,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    // Slider button
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: Column(
-                                        children: [
-                                          ConfirmationSlider(
-                                            stickToEnd: true,
-                                            width: sliderWidth,
-                                            height: 70,
-                                            backgroundColor: kZinc900,
-                                            onConfirmation: () {
-                                              _activateDistressSignal();
-                                            },
-                                            text: AppLocalizations.of(
-                                              context,
-                                            )!.translate('slideToActivate'),
-                                            foregroundColor: kRed600,
-                                            textStyle: TextStyle(
-                                              color: kRed600,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                              letterSpacing: 0.5,
-                                            ),
-                                            sliderButtonContent: const Icon(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(
                                               Icons.emergency,
+                                              size: 64,
                                               color: Colors.white,
-                                              size: 30,
                                             ),
-                                          ),
-                                          const SizedBox(height: 16),
-                                          Text(
-                                            AppLocalizations.of(
-                                              context,
-                                            )!.translate('emergencyUseOnly'),
-                                          ),
-                                        ],
+                                            const SizedBox(height: 12),
+                                            Text(
+                                              AppLocalizations.of(context)!
+                                                  .translate('sosActive')
+                                                  .toUpperCase(),
+                                              style: const TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.w900,
+                                                color: Colors.white,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
+                                      const SizedBox(height: 24),
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 20),
+                                        child: ConfirmationSlider(
+                                          width: sliderWidth,
+                                          height: 70,
+                                          backgroundColor: kZinc900,
+                                          foregroundColor: kRed500,
+                                          text: AppLocalizations.of(
+                                            context,
+                                          )!.translate('cancelSOS'),
+                                          textStyle: const TextStyle(
+                                            color: kRed500,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            letterSpacing: 0.5,
+                                          ),
+                                          onConfirmation: _cancelDistressSignal,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      // Slider button
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: Column(
+                                          children: [
+                                            ConfirmationSlider(
+                                              stickToEnd: true,
+                                              width: sliderWidth,
+                                              height: 70,
+                                              backgroundColor: kZinc900,
+                                              onConfirmation: () {
+                                                _activateDistressSignal();
+                                              },
+                                              text: AppLocalizations.of(
+                                                context,
+                                              )!.translate('slideToActivate'),
+                                              foregroundColor: kRed600,
+                                              textStyle: TextStyle(
+                                                color: kRed600,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                letterSpacing: 0.5,
+                                              ),
+                                              sliderButtonContent: const Icon(
+                                                Icons.emergency,
+                                                color: Colors.white,
+                                                size: 30,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            Text(
+                                              AppLocalizations.of(
+                                                context,
+                                              )!.translate('emergencyUseOnly'),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
                         ),
-                      ),
-                      Container(
-                        height: 180,
-                        margin: const EdgeInsets.all(16),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: kZinc900,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: kZinc800, width: 1),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.terminal, color: kZinc400, size: 16),
-                                SizedBox(width: 8),
-                                Text(
-                                  'SYSTEM LOG',
-                                  style: TextStyle(
+                        Container(
+                          height: 180,
+                          margin: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: kZinc900,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: kZinc800, width: 1),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.terminal,
                                     color: kZinc400,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.5,
+                                    size: 16,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'SYSTEM LOG',
+                                    style: TextStyle(
+                                      color: kZinc400,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: kZinc800,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: ListView.builder(
+                                    reverse: true,
+                                    itemCount: _logs.length,
+                                    itemBuilder: (context, index) {
+                                      return Text(
+                                        _logs[index],
+                                        style: const TextStyle(
+                                          color: kGreen500,
+                                          fontSize: 12,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: kZinc800, width: 1),
-                                ),
-                                child: ListView.builder(
-                                  reverse: true,
-                                  itemCount: _logs.length,
-                                  itemBuilder: (context, index) {
-                                    return Text(
-                                      _logs[index],
-                                      style: const TextStyle(
-                                        color: kGreen500,
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    );
-                                  },
-                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

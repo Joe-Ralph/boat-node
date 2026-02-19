@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:boatnode/l10n/app_localizations.dart';
 import 'package:boatnode/services/hardware_service.dart';
@@ -8,6 +10,7 @@ import 'package:boatnode/theme/app_theme.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:boatnode/services/log_service.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 class PairingScreen extends StatefulWidget {
   const PairingScreen({super.key});
@@ -24,6 +27,9 @@ class _PairingScreenState extends State<PairingScreen>
   bool _isPaired = false;
   late AnimationController _pulseController;
 
+  // ignore: unused_field
+  StreamSubscription? _scanSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -35,7 +41,9 @@ class _PairingScreenState extends State<PairingScreen>
 
   @override
   void dispose() {
+    _scanSubscription?.cancel();
     _pulseController.dispose();
+    HardwareService.stopScan();
     super.dispose();
   }
 
@@ -49,181 +57,75 @@ class _PairingScreenState extends State<PairingScreen>
     });
 
     try {
-      // 1. Get boat ID from Backend/Persisted Session (NOT from device)
-      String boatId;
-      final currentUser = await AuthService.getCurrentUser();
+      // 1. Permissions
+      // We need Location (for BLE on older Android) and Bluetooth Scan/Connect
+      Map<Permission, PermissionStatus> statuses = await [
+        Permission.location,
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission
+            .bluetooth, // For iOS often covered by plist but good to check
+      ].request();
 
-      if (currentUser?.boatId != null) {
-        boatId = currentUser!.boatId!;
-      } else {
-        // Fallback: This shouldn't happen for Owners if Dashboard loaded correctly.
-        // But if it does, try to fetch or error out.
-        try {
-          final boats = await BackendService.getUserBoats(
-            currentUser?.id ?? '',
-          );
-          if (boats.isNotEmpty) {
-            boatId = boats.first['id'].toString();
-          } else {
-            // For Joiners, they might not have a boat yet?
-            // But pairing is usually for OWNERS setting up the device.
-            // Joiners scan QR.
-            // If Owner has no boat, they should probably Register one first?
-            // For now, let's allow it to fail or use a placeholder if we must,
-            // but user requested BACKEND ID.
-            throw Exception(
-              "No registered boat found for this user. Please contact support.",
-            );
-          }
-        } catch (e) {
-          throw Exception("Could not retrieve Boat ID for pairing: $e");
-        }
+      // Check if critical permissions are granted
+      bool locationGranted = statuses[Permission.location]!.isGranted;
+      bool bleGranted =
+          (statuses[Permission.bluetoothScan]?.isGranted ?? true) &&
+          (statuses[Permission.bluetoothConnect]?.isGranted ?? true);
+
+      if (!locationGranted && !bleGranted) {
+        // Handle permission denial
+        throw Exception("Bluetooth and Location permissions are required.");
       }
 
-      // Request Location Permission for Wi-Fi scanning
-      var status = await Permission.location.status;
-      if (!status.isGranted) {
-        status = await Permission.location.request();
-      }
+      // 2. Start Scan
+      await HardwareService.startScan();
 
-      // Request Nearby Wifi Devices Permission (Android 13+)
-      if (await Permission.nearbyWifiDevices.status.isDenied) {
-        await Permission.nearbyWifiDevices.request();
-      }
-
-      if (!await Permission.location.isGranted &&
-          !await Permission.nearbyWifiDevices.isGranted) {
-        throw Exception(
-          "Location or Nearby Devices permission is required for Wi-Fi scanning",
-        );
-      }
-
-      // 2. Scan for Wi-Fi networks with prefix 'BOAT-PAIR-'
-      final devices = await HardwareService.scanForPairingDevices();
-
+      // The UI will update via StreamBuilder on scanResults
+    } catch (e) {
       if (!mounted) return;
-
-      if (devices.isEmpty) {
-        setState(() {
-          _statusMessage = AppLocalizations.of(
-            context,
-          )!.translate('noDevicesFound');
-          _isScanning = false;
-          _pulseController.stop();
-        });
-        return;
-      }
-
-      String selectedSsid;
-      if (devices.length == 1) {
-        selectedSsid = devices.first;
-      } else {
-        // Show dialog to choose device
-        final result = await showDialog<String>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text("Select Device"),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: devices.length,
-                itemBuilder: (context, index) {
-                  return ListTile(
-                    title: Text(devices[index]),
-                    onTap: () => Navigator.pop(context, devices[index]),
-                  );
-                },
-              ),
-            ),
-          ),
-        );
-
-        if (result == null) {
-          setState(() {
-            _isScanning = false;
-            _pulseController.stop();
-          });
-          return;
-        }
-        selectedSsid = result;
-      }
-
-      // Extract Device ID from SSID (BOAT-PAIR-XXXX)
-      final deviceId = selectedSsid.replaceFirst("BOAT-PAIR-", "");
-
       setState(() {
         _isScanning = false;
-        _isPairing = true;
-        _statusMessage = AppLocalizations.of(
-          context,
-        )!.translate('connectingToDevice');
+        _pulseController.stop();
+        _statusMessage = "Error: $e";
       });
+    }
+  }
 
-      // 3. Connect to the device's Wi-Fi
-      // Fetch password from backend first
-      String devicePassword;
-      try {
-        devicePassword = await BackendService.getDevicePassword(deviceId);
-      } catch (e) {
-        LogService.e('Error fetching password', e);
-        // Fallback or rethrow? For now, let's try to connect with a default or fail.
-        // If we can't get the password, we can't connect.
-        throw Exception('Could not retrieve password for device $deviceId');
-      }
+  Future<void> _onDeviceSelected(BluetoothDevice device) async {
+    HardwareService.stopScan();
+    setState(() {
+      _isScanning = false;
+      _isPairing = true;
+      _statusMessage = AppLocalizations.of(
+        context,
+      )!.translate('connectingToDevice');
+    });
 
-      await HardwareService.connectToDeviceWifi(devicePassword);
-      // We need to fetch it.
-      // But wait, `connectToDeviceWifi` in previous mock used hardcoded 'pairme-1234'.
-      // We should use `BackendService` to get password if possible, or use a default pattern.
-      // The requirement says: "get the device wifi password from the backend"
+    try {
+      // 1. Connect
+      await HardwareService.connectToDevice(device);
 
-      // We'll assume we can reach backend (via mobile data)
-      // If we can't, we might fail.
-
-      // For mock, let's just use a pattern or mock call.
-      // We don't have `BackendService` imported here yet, but we can add it or put logic in HardwareService.
-      // Let's assume HardwareService handles the password fetching internally or we pass it?
-      // `HardwareService.connectToDeviceWifi` takes a password.
-
-      // Let's fetch password via HardwareService helper or just assume a pattern for now to keep it simple
-      // or add a method in HardwareService to get password.
-      // Actually, let's just use 'pairme-$deviceId' as the password pattern for this mock.
-      // final devicePassword = 'pairme-$deviceId'; // Mock password pattern
-      // await HardwareService.connectToDeviceWifi(devicePassword);
-
-      // 4. Send pairing request
+      // 2. Pair / Configure
+      // Get User Info
       final user = await AuthService.getCurrentUser();
-      if (user == null) throw Exception('User not logged in');
+      String boatId = "1001"; // Default or fetch from backend
+
+      try {
+        final boats = await BackendService.getUserBoats(user?.id ?? "0");
+        if (boats.isNotEmpty) boatId = boats.first['id'].toString();
+      } catch (e) {
+        LogService.w("Could not fetch boat ID, using default/generated");
+      }
 
       final result = await HardwareService.pairDevice(
         boatId: boatId,
-        userId: int.tryParse(user.id) ?? 0,
-        displayName: user.displayName,
-        deviceId: deviceId,
+        userId: int.tryParse(user?.id ?? "0") ?? 0,
+        displayName: user?.displayName ?? "User",
       );
 
-      if (!mounted) return;
-
       if (result) {
-        // Fetch valid Backend ID
-        String finalBoatId = boatId;
-        try {
-          final boats = await BackendService.getUserBoats(user.id);
-          if (boats.isNotEmpty) {
-            finalBoatId = boats.first['id'].toString();
-            LogService.i('Backend Boat ID found: $finalBoatId');
-          } else {
-            LogService.w('No backend boat found for user. Using Hardware ID.');
-          }
-        } catch (e) {
-          LogService.e('Failed to fetch backend boat ID', e);
-        }
-
-        // Save pairing state
-        await SessionService.savePairingState(true, finalBoatId);
-
+        await SessionService.savePairingState(true, boatId);
         setState(() {
           _isPaired = true;
           _statusMessage = AppLocalizations.of(
@@ -232,110 +134,19 @@ class _PairingScreenState extends State<PairingScreen>
           _pulseController.stop();
         });
 
-        // Notify device to show success (long blue flash)
-        await HardwareService.notifyPairingSuccess();
-
-        // Return to dashboard after a delay
         if (mounted) {
           await Future.delayed(const Duration(seconds: 2));
-          _closeScreen();
+          Navigator.of(context).pop(true);
         }
       } else {
-        throw Exception('Pairing failed');
+        throw Exception("Configuration Failed");
       }
     } catch (e) {
-      if (!mounted) return;
-
       setState(() {
-        _isScanning = false;
         _isPairing = false;
+        _statusMessage = "Pairing Failed: $e";
         _pulseController.stop();
       });
-
-      String errorMessage = e.toString();
-      // Clean up exception message
-      if (errorMessage.startsWith("Exception: ")) {
-        errorMessage = errorMessage.substring(11);
-      }
-
-      if (errorMessage.contains("Location Service is disabled")) {
-        _showLocationServiceDialog();
-      } else if (errorMessage.contains("Location Permission denied")) {
-        _showPermissionDialog();
-      } else if (errorMessage.contains("WiFi is disabled")) {
-        _statusMessage = AppLocalizations.of(context)!.translate('enableWifi');
-      } else {
-        _statusMessage =
-            '${AppLocalizations.of(context)!.translate('pairingFailed')}: $errorMessage';
-      }
-    }
-  }
-
-  void _showLocationServiceDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          AppLocalizations.of(context)!.translate('locationRequired'),
-        ),
-        content: Text(
-          AppLocalizations.of(context)!.translate('enableLocationMessage'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(AppLocalizations.of(context)!.translate('cancel')),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Geolocator.openLocationSettings();
-            },
-            child: Text(AppLocalizations.of(context)!.translate('settings')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          AppLocalizations.of(context)!.translate('permissionRequired'),
-        ),
-        content: Text(
-          AppLocalizations.of(context)!.translate('grantLocationPermission'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(AppLocalizations.of(context)!.translate('cancel')),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              openAppSettings();
-            },
-            child: Text(AppLocalizations.of(context)!.translate('settings')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  bool _didPop = false;
-
-  void _closeScreen() {
-    if (_didPop) return;
-
-    if (mounted) {
-      final isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
-      if (isCurrent) {
-        _didPop = true;
-        Navigator.of(context).pop(true);
-      }
     }
   }
 
@@ -350,148 +161,139 @@ class _PairingScreenState extends State<PairingScreen>
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Animated Icon
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                if (_isScanning || _isPairing)
-                  ScaleTransition(
-                    scale: Tween(begin: 1.0, end: 1.5).animate(
-                      CurvedAnimation(
-                        parent: _pulseController,
-                        curve: Curves.easeOut,
-                      ),
-                    ),
-                    child: FadeTransition(
-                      opacity: Tween(begin: 0.5, end: 0.0).animate(
-                        CurvedAnimation(
-                          parent: _pulseController,
-                          curve: Curves.easeOut,
-                        ),
-                      ),
-                      child: Container(
-                        width: 120,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: kBlue600.withOpacity(0.5),
-                        ),
-                      ),
-                    ),
-                  ),
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isPaired ? kGreen500 : kZinc800,
-                  ),
-                  child: Icon(
-                    _isPaired ? Icons.check : Icons.bluetooth_searching,
-                    size: 48,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 48),
-
-            // Status Text
-            Text(
-              _statusMessage ??
-                  AppLocalizations.of(
-                    context,
-                  )!.translate('pairingInstructions'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 18,
-                color: Colors.white,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (!_isScanning && !_isPairing && !_isPaired)
-              Text(
-                AppLocalizations.of(
-                  context,
-                )!.translate('makeSureDevicePowered'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: kZinc500),
-              ),
-
-            const Spacer(),
-
-            // Action Button
-            if (!_isPaired)
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            children: [
+              // Animation / Icon Area
               SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: (_isScanning || _isPairing) ? null : _startPairing,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kBlue600,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: _isScanning || _isPairing
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              AppLocalizations.of(
-                                context,
-                              )!.translate('pleaseWait'),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        )
-                      : Text(
-                          AppLocalizations.of(
-                            context,
-                          )!.translate('startPairing'),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.white,
+                height: 150,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (_isScanning || _isPairing)
+                      ScaleTransition(
+                        scale: Tween(begin: 1.0, end: 1.5).animate(
+                          CurvedAnimation(
+                            parent: _pulseController,
+                            curve: Curves.easeOut,
                           ),
                         ),
+                        child: FadeTransition(
+                          opacity: Tween(begin: 0.5, end: 0.0).animate(
+                            CurvedAnimation(
+                              parent: _pulseController,
+                              curve: Curves.easeOut,
+                            ),
+                          ),
+                          child: Container(
+                            width: 120,
+                            height: 120,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: kBlue600.withOpacity(0.5),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Container(
+                      width: 100,
+                      height: 100,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _isPaired ? kGreen500 : kZinc800,
+                      ),
+                      child: Icon(
+                        _isPaired ? Icons.check : Icons.bluetooth_searching,
+                        size: 48,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            if (_isPaired)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _closeScreen,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kGreen500,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+
+              Text(
+                _statusMessage ??
+                    AppLocalizations.of(
+                      context,
+                    )!.translate('pairingInstructions'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 18,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Device List
+              if (_isScanning)
+                Expanded(
+                  child: StreamBuilder<List<ScanResult>>(
+                    stream: HardwareService.scanResults,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return Center(
+                          child: Text(
+                            "Searching...",
+                            style: TextStyle(color: kZinc500),
+                          ),
+                        );
+                      }
+
+                      final results = snapshot.data!;
+                      return ListView.builder(
+                        itemCount: results.length,
+                        itemBuilder: (context, index) {
+                          final r = results[index];
+                          String name = r.device.platformName.isNotEmpty
+                              ? r.device.platformName
+                              : "Unknown Device";
+                          return Card(
+                            color: kZinc900,
+                            child: ListTile(
+                              title: Text(
+                                name,
+                                style: TextStyle(color: Colors.white),
+                              ),
+                              subtitle: Text(
+                                r.device.remoteId.toString(),
+                                style: TextStyle(color: kZinc500),
+                              ),
+                              trailing: ElevatedButton(
+                                child: Text("Connect"),
+                                onPressed: () => _onDeviceSelected(r.device),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+              if (!_isScanning && !_isPaired && !_isPairing)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _startPairing,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kBlue600,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      AppLocalizations.of(context)!.translate('startPairing'),
+                      style: const TextStyle(fontSize: 16, color: Colors.white),
                     ),
                   ),
-                  child: Text(
-                    AppLocalizations.of(context)!.translate('done'),
-                    style: const TextStyle(fontSize: 16, color: Colors.white),
-                  ),
                 ),
-              ),
-            const SizedBox(height: 24),
-          ],
+            ],
+          ),
         ),
       ),
     );
