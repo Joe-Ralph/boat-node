@@ -76,9 +76,15 @@ class BackgroundService {
     // Only available for flutter 3.0.0 and later
     DartPluginRegistrant.ensureInitialized();
     try {
-      // Hardcoded values to ensure isolate has access
-      const supabaseUrl = 'https://ltlftxaskaebqwptcbdq.supabase.co';
-      const supabaseAnonKey = 'sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz';
+      // Use fromEnvironment to allow build-time configuration, fallback to default if not provided
+      const supabaseUrl = String.fromEnvironment(
+        'SUPABASE_URL',
+        defaultValue: 'https://ltlftxaskaebqwptcbdq.supabase.co',
+      );
+      const supabaseAnonKey = String.fromEnvironment(
+        'SUPABASE_ANON_KEY',
+        defaultValue: 'sb_publishable_R9EBVNhFL2rQOAUV2ihJ3A_SaSaPqbz',
+      );
 
       if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
         await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);

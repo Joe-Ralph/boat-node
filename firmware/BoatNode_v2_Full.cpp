@@ -66,6 +66,7 @@ String displayName = "";
 uint16_t userId_u16 = 0;
 
 bool wanJoined = false;
+bool lorawanInitialized = false;
 bool meshHeardRecently = false;
 uint32_t lastMeshHeardMs = 0;
 uint32_t nextSendAtMs = 0;
@@ -83,6 +84,8 @@ struct Pkt {
   uint16_t user_id;
   uint8_t  name_len;
   uint8_t  name_utf8[12];
+  uint16_t spd_cms;
+  uint16_t hdg_cdeg;
   uint16_t crc;
 };
 #pragma pack(pop)
@@ -105,6 +108,8 @@ struct BoatEntry {
   double lat;
   double lon;
   uint8_t battery;
+  uint16_t speed_cms;
+  uint16_t hdg_cdeg;
   uint32_t last_seen_ms;
 };
 
@@ -129,6 +134,8 @@ void updateNearbyCache(const Pkt* p) {
       b.lat = p->lat1e7 / 1e7;
       b.lon = p->lon1e7 / 1e7;
       b.battery = p->batt_pc;
+      b.speed_cms = p->spd_cms;
+      b.hdg_cdeg = p->hdg_cdeg;
       b.last_seen_ms = now;
       found = true;
       break;
@@ -151,6 +158,8 @@ void updateNearbyCache(const Pkt* p) {
     b.lat = p->lat1e7 / 1e7;
     b.lon = p->lon1e7 / 1e7;
     b.battery = p->batt_pc;
+    b.speed_cms = p->spd_cms;
+    b.hdg_cdeg = p->hdg_cdeg;
     b.last_seen_ms = now;
     nearbyBoats.push_back(b);
   }
@@ -314,18 +323,25 @@ void buildPkt(Pkt &p) {
   p.crc = 0; p.crc = crc16_ccitt((uint8_t*)&p, sizeof(Pkt)-2);
 }
 
+/* ------------ MESH RX IRQ ------------- */
+volatile bool meshRxFlag = false;
+void IRAM_ATTR setMeshRxFlag() { meshRxFlag = true; }
+
 bool meshInit() {
   int st = lora.begin(MESH_FREQ_MHZ, 125.0, MESH_SF, 5, 0x34, MESH_TX_DBM);
+  if (st != RADIOLIB_ERR_NONE) return false;
   lora.setCRC(true);
-  return st == RADIOLIB_ERR_NONE;
+  lora.setPacketReceivedAction(setMeshRxFlag);
+  lora.startReceive();
+  return true;
 }
 
 /* ------------ LORAWAN (Stubbed for brevity) ------------- */
 void os_getArtEui(u1_t *b){memcpy(b, APPEUI, 8);}
 void os_getDevEui(u1_t *b){memcpy(b, DEVEUI, 8);}
 void os_getDevKey(u1_t *b){memcpy(b, APPKEY, 16);}
-void onLmicEvent(ev_t ev) { if (ev==EV_JOINED) wanJoined=true; }
-void lorawanInit() { os_init(); LMIC_reset(); LMIC_startJoining(); }
+void onEvent(ev_t ev) { if (ev==EV_JOINED) wanJoined=true; }
+void lorawanInit() { os_init(); LMIC_reset(); LMIC_startJoining(); lorawanInitialized = true; }
 bool lorawanSend(const uint8_t *buf, uint8_t len) {
   if (!wanJoined || (LMIC.opmode & OP_TXRXPEND)) return false;
   LMIC_setTxData2(LORAWAN_FPORT, (xref2u1_t)buf, len, 0);
@@ -353,36 +369,41 @@ void setup() {
 }
 
 void loop() {
-  os_runloop_once();
+  if (lorawanInitialized) os_runloop_once();
   while(GPSSerial.available()) gps.encode(GPSSerial.read());
 
   if (pairingAPon) http.handleClient();
 
-  // Mesh Reception
-  uint8_t buf[128]; size_t bl=sizeof(buf);
-  if (lora.available() && lora.receive(buf, bl) == RADIOLIB_ERR_NONE && bl==sizeof(Pkt)) {
-    Pkt *rp=(Pkt*)buf;
-    uint16_t s=rp->crc; rp->crc=0;
-    if (s==crc16_ccitt((uint8_t*)rp, sizeof(Pkt)-2)) {
-      lastMeshHeardMs=millis();
-      
-      // 1. Update Cache for Mobile App
-      updateNearbyCache(rp);
+  // Mesh Reception (IRQ-driven)
+  if (meshRxFlag) {
+    meshRxFlag = false;
+    size_t pktLen = lora.getPacketLength();
+    uint8_t buf[sizeof(Pkt)];
+    int16_t rd = lora.readData(buf, sizeof(buf));
+    if (rd == RADIOLIB_ERR_NONE && pktLen == sizeof(Pkt)) {
+      Pkt *rp=(Pkt*)buf;
+      uint16_t s=rp->crc; rp->crc=0;
+      if (s==crc16_ccitt((uint8_t*)rp, sizeof(Pkt)-2)) {
+        lastMeshHeardMs=millis();
 
-      // 2. Mesh Forwarding (Flood Fill)
-      if (rp->hops < 4) {
-        rp->hops++;
-        rp->crc = crc16_ccitt((uint8_t*)rp, sizeof(Pkt)-2); // Re-sign
-        delay(random(200,600)); // Jitter
-        lora.transmit((uint8_t*)rp, sizeof(Pkt));
-      }
+        // 1. Update Cache for Mobile App
+        updateNearbyCache(rp);
 
-      // 3. Gateway Forwarding (Any-cast)
-      // If we have WAN, forward this packet to cloud!
-      if (wanJoined) {
-        lorawanSend((uint8_t*)rp, sizeof(Pkt));
+        // 2. Mesh Forwarding (Flood Fill)
+        if (rp->hops < 4) {
+          rp->hops++;
+          rp->crc = crc16_ccitt((uint8_t*)rp, sizeof(Pkt)-2); // Re-sign
+          delay(random(200,600)); // Jitter
+          lora.transmit((uint8_t*)rp, sizeof(Pkt));
+        }
+
+        // 3. Gateway Forwarding (Any-cast)
+        if (wanJoined) {
+          lorawanSend((uint8_t*)rp, sizeof(Pkt));
+        }
       }
     }
+    lora.startReceive();
   }
 
   // Periodic Report
@@ -390,10 +411,10 @@ void loop() {
     nextSendAtMs = millis() + REPORT_SEC*1000 + random(0,REPORT_JITTER_S*1000);
     if (paired) {
       Pkt p; memset(&p,0,sizeof(p)); buildPkt(p);
-      // If we have WAN, send there. Else mesh.
-      // Actually, send to mesh ALWAYS so others can see us
+      // Always mesh-broadcast so neighbors see us
       lora.transmit((uint8_t*)&p, sizeof(p));
-      
+      lora.startReceive(); // re-arm RX after TX
+
       if (wanJoined) lorawanSend((uint8_t*)&p, sizeof(p));
     }
   }

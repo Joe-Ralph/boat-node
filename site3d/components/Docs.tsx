@@ -439,63 +439,148 @@ const ArchDiagram: React.FC = () => (
 
 type FlowStep = { from: string; to: string; label: string; color?: string; note?: string };
 
+// One-row helpers for the new sequence diagram.
+const ArrowSegment: React.FC<{ tone: string; rightward: boolean }> = ({ tone, rightward }) => (
+    <svg viewBox="0 0 100 12" preserveAspectRatio="none"
+        className="w-full" style={{ height: 12, display: 'block' }}>
+        {rightward ? (
+            <>
+                <circle cx="2" cy="6" r="2.5" fill={tone} />
+                <line x1="4" y1="6" x2="92" y2="6" stroke={tone} strokeWidth="1.6" />
+                <polygon points="92,2 100,6 92,10" fill={tone} />
+            </>
+        ) : (
+            <>
+                <polygon points="8,2 0,6 8,10" fill={tone} />
+                <line x1="8" y1="6" x2="96" y2="6" stroke={tone} strokeWidth="1.6" />
+                <circle cx="98" cy="6" r="2.5" fill={tone} />
+            </>
+        )}
+    </svg>
+);
+
+const SelfLoop: React.FC<{ tone: string; label: string }> = ({ tone, label }) => (
+    <div className="flex items-center gap-2.5 py-2 px-2 max-w-full">
+        <svg viewBox="0 0 28 28" width="26" height="26" style={{ flexShrink: 0 }}>
+            <circle cx="14" cy="14" r="3" fill={tone} />
+            <path d="M 14 7 A 7 7 0 1 1 7 14" stroke={tone} strokeWidth="1.6" fill="none" />
+            <polygon points="4,11 8,15 11,11" fill={tone} />
+        </svg>
+        <div className="docs-mono text-[11px] px-2.5 py-1 leading-tight"
+            style={{ background: C.bg, border: `1px solid ${tone}55`, color: C.text }}>
+            {label}
+        </div>
+    </div>
+);
+
 const SwimLane: React.FC<{
     lanes: string[];
     steps: FlowStep[];
     title: string;
-    height?: number;
-}> = ({ lanes, steps, title, height = 380 }) => {
-    const laneW = 200;
-    const total = lanes.length * laneW;
-    const stepDy = (height - 80) / steps.length;
+    height?: number;     // legacy; ignored
+}> = ({ lanes, steps, title }) => {
+    const cols = `56px repeat(${lanes.length}, minmax(140px, 1fr)) 240px`;
+    const minPx = 56 + 240 + lanes.length * 150;
+
     return (
-        <div className="docs-panel p-6 my-6 overflow-x-auto">
-            <div className="docs-mono text-xs text-white mb-4">{title}</div>
-            <svg viewBox={`0 0 ${total} ${height}`} className="w-full h-auto" style={{ minWidth: `${total}px` }}>
-                <defs>
-                    <marker id={`fa-${title.replace(/\W/g,'')}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                        <path d="M0,0 L10,5 L0,10 z" fill={C.cyan} />
-                    </marker>
-                </defs>
-                {lanes.map((lane, i) => (
-                    <g key={i}>
-                        <rect x={i * laneW} y={0} width={laneW} height={36} fill={C.panelHi} />
-                        <text x={i * laneW + laneW / 2} y={22} textAnchor="middle" fill={C.cyan} fontSize="11" fontFamily="JetBrains Mono" letterSpacing="2">
-                            {lane}
-                        </text>
-                        <line x1={i * laneW + laneW / 2} y1={36} x2={i * laneW + laneW / 2} y2={height - 10}
-                            stroke={C.border} strokeWidth="1" strokeDasharray="2 3" />
-                    </g>
+        <div className="docs-panel my-6 overflow-x-auto">
+            <div className="px-5 py-3 border-b border-[#1f2434] flex items-center justify-between">
+                <span className="docs-mono text-xs text-white tracking-[0.2em]">{title}</span>
+                <span className="docs-mono text-[10px] tracking-[0.3em] uppercase text-[#5a6478]">
+                    {steps.length} steps · {lanes.length} actors
+                </span>
+            </div>
+
+            {/* Lane header */}
+            <div className="grid bg-[#0a0c14]" style={{ gridTemplateColumns: cols, minWidth: minPx }}>
+                <div className="border-b border-[#1f2434]" />
+                {lanes.map((l) => (
+                    <div key={l} className="border-b border-[#1f2434] py-3 text-center">
+                        <div className="inline-block px-3 py-1 docs-mono text-[10px] tracking-[0.3em] uppercase"
+                            style={{ background: C.panelHi, color: C.cyan, border: `1px solid ${C.border}` }}>
+                            {l}
+                        </div>
+                    </div>
                 ))}
+                <div className="border-b border-l border-[#1f2434] py-3 px-4 text-right docs-mono text-[9px] tracking-[0.3em] uppercase text-[#5a6478]">
+                    notes
+                </div>
+            </div>
+
+            {/* Steps */}
+            <div className="relative" style={{ minWidth: minPx }}>
+                {/* Lifelines drawn as full-height vertical dashed rules */}
+                <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: cols }}>
+                    <div />
+                    {lanes.map((_, i) => (
+                        <div key={i} className="flex justify-center">
+                            <div className="w-px h-full"
+                                style={{ background: `repeating-linear-gradient(to bottom, ${C.border} 0 4px, transparent 4px 8px)` }} />
+                        </div>
+                    ))}
+                    <div />
+                </div>
+
                 {steps.map((s, i) => {
-                    const fromX = lanes.indexOf(s.from) * laneW + laneW / 2;
-                    const toX = lanes.indexOf(s.to) * laneW + laneW / 2;
-                    const y = 60 + i * stepDy;
-                    const color = s.color || C.cyan;
-                    const isSelf = s.from === s.to;
+                    const fromIdx = lanes.indexOf(s.from);
+                    const toIdx = lanes.indexOf(s.to);
+                    const tone = s.color || C.cyan;
+                    const isSelf = fromIdx === toIdx;
+                    const leftIdx = Math.min(fromIdx, toIdx);
+                    const rightIdx = Math.max(fromIdx, toIdx);
+                    const rightward = toIdx > fromIdx;
+                    const stripe = i % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent';
+
                     return (
-                        <g key={i}>
-                            <circle cx={fromX - (isSelf ? 0 : 18 * (toX > fromX ? -1 : 1))} cy={y - 10} r="11"
-                                fill={C.panel} stroke={color} />
-                            <text x={fromX - (isSelf ? 0 : 18 * (toX > fromX ? -1 : 1))} y={y - 6} textAnchor="middle"
-                                fill={color} fontSize="10" fontFamily="JetBrains Mono">{i + 1}</text>
+                        <div key={i} className="relative grid items-stretch border-t border-[#1f2434]"
+                            style={{ gridTemplateColumns: cols, minHeight: 72, background: stripe }}>
+                            {/* Step number gutter */}
+                            <div className="flex items-center justify-center">
+                                <div className="docs-mono flex items-center justify-center"
+                                    style={{
+                                        width: 30, height: 30, border: `1px solid ${tone}`, color: tone,
+                                        fontSize: 12, background: C.bg,
+                                    }}>
+                                    {i + 1}
+                                </div>
+                            </div>
+
                             {isSelf ? (
-                                <path d={`M ${fromX + 8} ${y - 4} q 30 6 0 18`} stroke={color} fill="none" strokeWidth="1.2"
-                                    markerEnd={`url(#fa-${title.replace(/\W/g,'')})`} />
+                                lanes.map((_, li) => (
+                                    <div key={li} className="flex items-center justify-center px-1">
+                                        {li === fromIdx ? <SelfLoop tone={tone} label={s.label} /> : null}
+                                    </div>
+                                ))
                             ) : (
-                                <line x1={fromX} y1={y} x2={toX} y2={y} stroke={color} strokeWidth="1.2"
-                                    markerEnd={`url(#fa-${title.replace(/\W/g,'')})`} />
+                                <>
+                                    {Array.from({ length: leftIdx }, (_, k) => <div key={`l${k}`} />)}
+                                    <div className="relative flex flex-col items-center justify-center px-3 py-3"
+                                        style={{ gridColumn: `span ${rightIdx - leftIdx + 1}` }}>
+                                        <div className="docs-mono text-[11px] mb-2 px-3 py-1 leading-tight text-center max-w-full"
+                                            style={{
+                                                background: C.bg, color: C.text,
+                                                border: `1px solid ${tone}66`,
+                                                boxShadow: `0 0 0 3px ${C.bg}`,   // halo over the lifeline
+                                            }}>
+                                            {s.label}
+                                        </div>
+                                        <div className="w-full">
+                                            <ArrowSegment tone={tone} rightward={rightward} />
+                                        </div>
+                                    </div>
+                                    {Array.from({ length: lanes.length - 1 - rightIdx }, (_, k) => <div key={`r${k}`} />)}
+                                </>
                             )}
-                            <text x={(fromX + toX) / 2 + (isSelf ? 30 : 0)} y={y - 6} textAnchor="middle"
-                                fill={C.text} fontSize="10.5" fontFamily="JetBrains Mono">{s.label}</text>
-                            {s.note && (
-                                <text x={(fromX + toX) / 2 + (isSelf ? 30 : 0)} y={y + 14} textAnchor="middle"
-                                    fill={C.mute} fontSize="9" fontFamily="JetBrains Mono">{s.note}</text>
-                            )}
-                        </g>
+
+                            <div className="border-l border-[#1f2434] px-4 py-2 flex items-center">
+                                <span className="docs-mono text-[10px] leading-snug" style={{ color: C.sub }}>
+                                    {s.note || ''}
+                                </span>
+                            </div>
+                        </div>
                     );
                 })}
-            </svg>
+            </div>
         </div>
     );
 };

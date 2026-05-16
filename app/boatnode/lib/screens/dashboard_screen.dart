@@ -25,7 +25,7 @@ import 'package:geolocator/geolocator.dart';
 
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' hide ServiceStatus;
 import '../utils/ui_utils.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
@@ -46,6 +46,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isNearBorder = false;
   bool _isConnecting = false;
   bool _isProcessingJourney = false;
+  bool _isLocationEnabled = false; // Track service status
 
   User? _user;
 
@@ -57,6 +58,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     HardwareService.connectionState.listen((isConnected) {
       if (mounted) {
         _loadData();
+      }
+    });
+
+    // Listen for Location Service changes
+    _checkLocationService();
+    Geolocator.getServiceStatusStream().listen((status) {
+      if (mounted) {
+        setState(() {
+          _isLocationEnabled = status == ServiceStatus.enabled;
+          if (!_isLocationEnabled) {
+            _currentPosition = null; // Clear position if service is disabled
+          }
+        });
       }
     });
 
@@ -174,6 +188,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) {
       setState(() {
         _hasInternet = hasInternet;
+      });
+    }
+  }
+
+  Future<void> _checkLocationService() async {
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (mounted) {
+      setState(() {
+        _isLocationEnabled = enabled;
+        if (!enabled) {
+          _currentPosition = null;
+        }
       });
     }
   }
@@ -1120,7 +1146,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       lng != null &&
                       (lat != 0.0 || lng != 0.0));
                 } else {
-                  return _currentPosition != null; // Phone GPS
+                  return _isLocationEnabled &&
+                      _currentPosition != null; // Phone GPS
                 }
               }()),
               _buildStatusBadge(
